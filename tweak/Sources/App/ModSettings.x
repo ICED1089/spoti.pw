@@ -27,6 +27,7 @@
 #import "Shared/LiveActivity/LiveActivity.h"
 #import "App/About/About.h"
 #import "App/Donate/Donate.h"
+#import "App/EeveeIntegration.h"
 #import "Pages.h"
 
 static const CGFloat kRowHeight = 56;
@@ -83,6 +84,11 @@ static UIViewController *modSettingsPage(void) {
     [sections addObjectsFromArray:@[
         SGSection(nil, parts),
         SGSection(nil, @[
+            ({
+                SGModRow *integration = pageRow(@"Eevee integration", @"checkmark.shield", ^UIViewController *{ return SGEeveeIntegrationPage(); });
+                integration.value = ^NSString *{ return SGEeveeIntegrationSummary(); };
+                integration;
+            }),
             pageRow(@"Privacy & clutter", @"hand.raised", ^UIViewController *{ return SGPrivacySettingsPage(); }),
             pageRow(@"Labs", @"testtube.2", ^UIViewController *{ return SGLabsPage(); }),
         ]),
