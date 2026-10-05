@@ -2,6 +2,7 @@
 #import "Settings/SGPageStyle.h"
 #import "About.h"
 #import "App/Onboarding/Onboarding.h"
+#import "Diagnostics/Diagnostics.h"
 
 // Every key of the mod's is under one prefix, so a reset is a sweep of the defaults with the stock
 // marker of SGPrefs.h left behind; the hooks read them at launch, so it ends in a restart.
@@ -32,6 +33,33 @@ static SGModRow *withSymbol(SGModRow *row, NSString *symbol) {
     return row;
 }
 
+
+static NSString *diagnosticsReport(void) {
+    NSString *spotify = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown";
+    NSString *ios = UIDevice.currentDevice.systemVersion ?: @"unknown";
+    NSString *mode = SGRedesignedUIStored() ? @"redesigned" : @"legacy";
+    NSMutableString *report = [NSMutableString stringWithFormat:
+        @"spoti.pw personal diagnostics\n"
+         "Mod version: %@\n"
+         "Spotify: %@\n"
+         "iOS: %@\n"
+         "UI mode: %@\n"
+         "Debug/FLEX build: %@\n\n",
+         @(SG_VERSION), spotify, ios, mode, SGIsDebugBuild() ? @"yes" : @"no"];
+    [report appendString:@"== current screen ==\n"];
+    [report appendString:SGScreenTree() ?: @"(screen tree unavailable)\n"];
+    return report;
+}
+
+static void copyDiagnosticsReport(void) {
+    UIPasteboard.generalPasteboard.string = diagnosticsReport();
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Diagnostics copied"
+                                                                   message:@"Paste this into the ChatGPT project when something breaks. It contains build/device details and the visible screen structure, so review it first if the screen contains anything private."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [SGTopController() presentViewController:alert animated:YES completion:nil];
+}
+
 // Which build this is, whether GitHub has a newer release, and where to reach the mod: without these
 // rows a build that is already installed has no way of telling its user that anything moved on.
 UIViewController *SGAboutPage(void) {
@@ -57,6 +85,7 @@ UIViewController *SGAboutPage(void) {
             withSymbol(SGActionRow(@"Welcome tour", nil, ^{ SGShowOnboarding(); }), @"map"),
         ]),
         SGSection(nil, @[
+            withSymbol(SGActionRow(@"Copy diagnostics", @"Build info and the current screen structure", ^{ copyDiagnosticsReport(); }), @"stethoscope"),
             withSymbol(SGActionRow(@"Export settings", nil, ^{ SGExportSettings(); }), @"square.and.arrow.up"),
             withSymbol(SGActionRow(@"Import settings", nil, ^{ SGImportSettings(); }), @"square.and.arrow.down"),
         ]),
