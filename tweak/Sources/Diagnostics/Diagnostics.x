@@ -96,6 +96,56 @@ void SGDumpScreen(NSString *reason) {
     SGLogLong([@"screen dump " stringByAppendingString:reason], SGScreenTree());
 }
 
+NSString *SGDiagnosticsReport(void) {
+    NSString *spotify = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown";
+    NSString *spotifyBuild = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"unknown";
+    NSString *ios = UIDevice.currentDevice.systemVersion ?: @"unknown";
+    NSString *device = UIDevice.currentDevice.model ?: @"unknown";
+    NSString *mode = SGRedesignedUIStored() ? @"redesigned" : @"legacy";
+
+    NSMutableString *report = [NSMutableString stringWithFormat:
+        @"spoti.pw personal diagnostics\n"
+         "Generated: %@\n"
+         "Mod version: %@\n"
+         "Spotify: %@ (%@)\n"
+         "iOS: %@\n"
+         "Device: %@\n"
+         "UI mode: %@\n"
+         "FLEX/debug build: %@\n\n",
+         [NSDate date], @(SG_VERSION), spotify, spotifyBuild, ios, device, mode,
+         SGIsDebugBuild() ? @"yes" : @"no"];
+
+    [report appendString:@"== current screen and mod state ==\n"];
+    [report appendString:SGScreenTree() ?: @"(screen tree unavailable)\n"];
+
+    [report appendString:@"\n== spoti.pw rolling log ==\n"];
+    NSString *log = SGLogFileContents();
+    [report appendString:log.length ? log : @"(no spoti.pw log entries yet)\n"];
+
+    return report;
+}
+
+NSURL *SGWriteDiagnosticsReport(void) {
+    static NSDateFormatter *formatter;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        formatter = [NSDateFormatter new];
+        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        formatter.dateFormat = @"yyyyMMdd-HHmmss";
+    });
+
+    NSString *name = [NSString stringWithFormat:@"spoti-pw-diagnostics-%@.txt", [formatter stringFromDate:[NSDate date]]];
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:name];
+    NSString *report = SGDiagnosticsReport();
+    NSError *error = nil;
+    if (![report writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+        SGLog(@"diagnostics export failed: %@", error.localizedDescription ?: @"unknown error");
+        return nil;
+    }
+    SGLog(@"diagnostics report written: %@", name);
+    return [NSURL fileURLWithPath:path];
+}
+
 // GET anything on 127.0.0.1:kTreePort answers with the current screen's tree as text/plain.
 static void sendAll(int client, NSData *data) {
     const uint8_t *p = data.bytes;
