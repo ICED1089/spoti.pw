@@ -59,8 +59,8 @@ SGModRow *SGSigningWarningRow(void);          // nil while the signature is soun
 void SGCheckSigningOnce(void);
 void SGShowSigningFixIfPending(void);   // the sheet the tour held back, if any
 
-// Compatibility.m: a Spotify other than SGSupportedSpotifyVersion, or EeveeSpotify injected alongside.
-// Each gets an alert once and a red row at the top of Mod Settings.
+// Compatibility.m: a Spotify other than SGSupportedSpotifyVersion gets an alert once and a red row.
+// EeveeSpotify is intentionally supported by the personal combined-build integration.
 NSArray<SGModRow *> *SGCompatibilityWarningRows(void);   // empty when neither
 void SGCheckCompatibilityOnce(void);
 
