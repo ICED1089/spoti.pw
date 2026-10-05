@@ -33,31 +33,42 @@ static SGModRow *withSymbol(SGModRow *row, NSString *symbol) {
     return row;
 }
 
-
-static NSString *diagnosticsReport(void) {
-    NSString *spotify = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown";
-    NSString *ios = UIDevice.currentDevice.systemVersion ?: @"unknown";
-    NSString *mode = SGRedesignedUIStored() ? @"redesigned" : @"legacy";
-    NSMutableString *report = [NSMutableString stringWithFormat:
-        @"spoti.pw personal diagnostics\n"
-         "Mod version: %@\n"
-         "Spotify: %@\n"
-         "iOS: %@\n"
-         "UI mode: %@\n"
-         "Debug/FLEX build: %@\n\n",
-         @(SG_VERSION), spotify, ios, mode, SGIsDebugBuild() ? @"yes" : @"no"];
-    [report appendString:@"== current screen ==\n"];
-    [report appendString:SGScreenTree() ?: @"(screen tree unavailable)\n"];
-    return report;
-}
-
-static void copyDiagnosticsReport(void) {
-    UIPasteboard.generalPasteboard.string = diagnosticsReport();
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Diagnostics copied"
-                                                                   message:@"Paste this into the ChatGPT project when something breaks. It contains build/device details and the visible screen structure, so review it first if the screen contains anything private."
+static void showDiagnosticsMessage(NSString *title, NSString *message) {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
     [SGTopController() presentViewController:alert animated:YES completion:nil];
+}
+
+static void exportDiagnostics(void) {
+    NSURL *url = SGWriteDiagnosticsReport();
+    if (!url) {
+        showDiagnosticsMessage(@"Export failed", @"The diagnostics report could not be written.");
+        return;
+    }
+
+    UIViewController *top = SGTopController();
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    UIPopoverPresentationController *popover = share.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = top.view;
+        popover.sourceRect = CGRectMake(CGRectGetMidX(top.view.bounds), CGRectGetMidY(top.view.bounds), 1, 1);
+        popover.permittedArrowDirections = 0;
+    }
+    [top presentViewController:share animated:YES completion:nil];
+}
+
+static void copyDiagnostics(void) {
+    UIPasteboard.generalPasteboard.string = SGDiagnosticsReport();
+    showDiagnosticsMessage(@"Diagnostics copied",
+                           @"Paste the report into the ChatGPT project. It includes the current screen structure and may contain visible text, so review it before sharing publicly.");
+}
+
+static void clearDiagnostics(void) {
+    SGClearLogFile();
+    SGLog(@"diagnostic log cleared by user");
+    showDiagnosticsMessage(@"Diagnostic log cleared", @"A fresh spoti.pw log has started.");
 }
 
 // Which build this is, whether GitHub has a newer release, and where to reach the mod: without these
@@ -84,8 +95,12 @@ UIViewController *SGAboutPage(void) {
             withSymbol(SGPageRow(@"Licenses", ^UIViewController *{ return SGLicensesPage(); }), @"doc.text"),
             withSymbol(SGActionRow(@"Welcome tour", nil, ^{ SGShowOnboarding(); }), @"map"),
         ]),
+        SGSection(@"Diagnostics", @[
+            withSymbol(SGActionRow(@"Export diagnostics", @"Share a report with build info, current screen state and the rolling spoti.pw log", ^{ exportDiagnostics(); }), @"square.and.arrow.up.on.square"),
+            withSymbol(SGActionRow(@"Copy diagnostics", @"Copy the same report to the clipboard", ^{ copyDiagnostics(); }), @"doc.on.doc"),
+            withSymbol(SGActionRow(@"Clear diagnostic log", @"Start a fresh rolling log", ^{ clearDiagnostics(); }), @"trash"),
+        ]),
         SGSection(nil, @[
-            withSymbol(SGActionRow(@"Copy diagnostics", @"Build info and the current screen structure", ^{ copyDiagnosticsReport(); }), @"stethoscope"),
             withSymbol(SGActionRow(@"Export settings", nil, ^{ SGExportSettings(); }), @"square.and.arrow.up"),
             withSymbol(SGActionRow(@"Import settings", nil, ^{ SGImportSettings(); }), @"square.and.arrow.down"),
         ]),
