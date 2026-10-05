@@ -132,9 +132,16 @@ else
   echo "    no WidgetExtension.appex in this IPA"
 fi
 
-echo "==> adding the alternate app icons"
-# A failure leaves the IPA as it was, without them; Mod > App icon then does not show.
-"$ROOT/scripts/app-icons.sh" "$OUT" || echo "    the app icons failed: building without them"
+# Alternate icon compilation currently stalls/fails on GitHub's macOS runner when the
+# simulator runtime does not match the selected Xcode. Personal CI builds skip it for speed;
+# local/upstream builds keep the original behaviour unless SKIP_ALT_ICONS=1 is set.
+if [ "${SKIP_ALT_ICONS:-0}" = "1" ]; then
+  echo "==> skipping alternate app icons (CI fast path)"
+else
+  echo "==> adding the alternate app icons"
+  # A failure leaves the IPA as it was, without them; Mod > App icon then does not show.
+  "$ROOT/scripts/app-icons.sh" "$OUT" || echo "    the app icons failed: building without them"
+fi
 
 if [ -n "${EXT_DIR:-}" ]; then
   echo "==> adding the Live Activity intents to Spotify's App Intents metadata"
