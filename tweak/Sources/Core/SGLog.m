@@ -45,7 +45,7 @@ void SGLogMessage(NSString *message) {
     dispatch_async(SGLogQueue(), ^{
         NSString *path = SGLogPath();
         if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
-            [NSData.data writeToFile:path atomically:YES];
+            [[NSData data] writeToFile:path atomically:YES];
         }
 
         NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
