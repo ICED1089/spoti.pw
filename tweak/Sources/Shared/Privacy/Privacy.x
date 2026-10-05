@@ -146,6 +146,10 @@ static NSURLSessionConfiguration *carryingProtocol(NSURLSessionConfiguration *co
 %end
 
 %ctor {
+    if (SGEeveePresent()) {
+        SGLog(@"privacy: Eevee present, spoti.pw telemetry blocker stays off");
+        return;
+    }
     if (SGEnabled(SGKeyBlockTelemetry)) {
         [NSURLProtocol registerClass:SGBlockProtocol.class];
         %init;
