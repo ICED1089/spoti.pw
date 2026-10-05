@@ -1,9 +1,8 @@
 // What the mod isn't made to run with: a Spotify other than SGSupportedSpotifyVersion, whose classes have
-// moved, and EeveeSpotify, which hooks the same places. Bug reports from either can't be acted on, so each
-// is said once in an alert and stays as a red row at the top of Mod Settings.
+// moved. EeveeSpotify is supported by this personal combined build through Core/SGEeveeIntegration,
+// so it is no longer treated as an incompatibility here.
 #import "Core/SGCore.h"
 #import "Settings/SGPageStyle.h"
-#import "Shared/LyricsSources/LyricsSources.h"
 #import "About.h"
 #import "App/Onboarding/Onboarding.h"
 #import "App/Sheet/SGCardSheet.h"
@@ -43,18 +42,6 @@ static NSArray<SGIncompatibility *> *incompatibilities(void) {
             wrong.key = @"spotifyglass.spotifyversion.warned";
             wrong.stamp = version;
             [list addObject:wrong];
-        }
-        if (SGEeveeLoaded()) {
-            SGIncompatibility *eevee = [SGIncompatibility new];
-            eevee.title = @"EeveeSpotify isn't supported";
-            eevee.subtitle = @"It is injected alongside spoti.pw";
-            eevee.message = [NSString stringWithFormat:
-                @"spoti.pw isn't made to run alongside EeveeSpotify. Both change the same parts of Spotify, "
-                @"so things break or behave in ways you don't expect.\n\n%@ Use an IPA without EeveeSpotify instead.",
-                kReportLine];
-            eevee.key = @"spotifyglass.eevee.warned";
-            eevee.stamp = @"eevee";
-            [list addObject:eevee];
         }
         found = list;
     });
