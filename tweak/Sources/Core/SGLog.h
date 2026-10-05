@@ -1,8 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <os/log.h>
 
-// %{public}s so idevicesyslog on the Mac sees the text instead of <private>.
-#define SGLog(fmt, ...) os_log_with_type(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, "[spotifyglass] %{public}s", [NSString stringWithFormat:(fmt), ##__VA_ARGS__].UTF8String)
+// Writes to both the iOS unified log and a small rolling file that can be exported from Mod settings.
+void SGLogMessage(NSString *message);
+NSString *SGLogFileContents(void);
+void SGClearLogFile(void);
+
+#define SGLog(fmt, ...) SGLogMessage([NSString stringWithFormat:(fmt), ##__VA_ARGS__])
 
 // Long dumps, split into numbered parts under the unified log's size cap.
 void SGLogLong(NSString *tag, NSString *text);
