@@ -2,6 +2,7 @@
 #import "Settings/SGPageStyle.h"
 #import "About.h"
 #import "App/Onboarding/Onboarding.h"
+#import "Diagnostics/Diagnostics.h"
 
 // Every key of the mod's is under one prefix, so a reset is a sweep of the defaults with the stock
 // marker of SGPrefs.h left behind; the hooks read them at launch, so it ends in a restart.
@@ -32,6 +33,44 @@ static SGModRow *withSymbol(SGModRow *row, NSString *symbol) {
     return row;
 }
 
+static void showDiagnosticsMessage(NSString *title, NSString *message) {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [SGTopController() presentViewController:alert animated:YES completion:nil];
+}
+
+static void exportDiagnostics(void) {
+    NSURL *url = SGWriteDiagnosticsReport();
+    if (!url) {
+        showDiagnosticsMessage(@"Export failed", @"The diagnostics report could not be written.");
+        return;
+    }
+
+    UIViewController *top = SGTopController();
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    UIPopoverPresentationController *popover = share.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = top.view;
+        popover.sourceRect = CGRectMake(CGRectGetMidX(top.view.bounds), CGRectGetMidY(top.view.bounds), 1, 1);
+        popover.permittedArrowDirections = 0;
+    }
+    [top presentViewController:share animated:YES completion:nil];
+}
+
+static void copyDiagnostics(void) {
+    UIPasteboard.generalPasteboard.string = SGDiagnosticsReport();
+    showDiagnosticsMessage(@"Diagnostics copied",
+                           @"Paste the report into the ChatGPT project. It includes the current screen structure and may contain visible text, so review it before sharing publicly.");
+}
+
+static void clearDiagnostics(void) {
+    SGClearLogFile();
+    SGLog(@"diagnostic log cleared by user");
+    showDiagnosticsMessage(@"Diagnostic log cleared", @"A fresh spoti.pw log has started.");
+}
+
 // Which build this is, whether GitHub has a newer release, and where to reach the mod: without these
 // rows a build that is already installed has no way of telling its user that anything moved on.
 UIViewController *SGAboutPage(void) {
@@ -55,6 +94,11 @@ UIViewController *SGAboutPage(void) {
             withSymbol(SGLinkRow(@"GitHub", nil, SGRepoURL), @"chevron.left.forwardslash.chevron.right"),
             withSymbol(SGPageRow(@"Licenses", ^UIViewController *{ return SGLicensesPage(); }), @"doc.text"),
             withSymbol(SGActionRow(@"Welcome tour", nil, ^{ SGShowOnboarding(); }), @"map"),
+        ]),
+        SGSection(@"Diagnostics", @[
+            withSymbol(SGActionRow(@"Export diagnostics", @"Share a report with build info, current screen state and the rolling spoti.pw log", ^{ exportDiagnostics(); }), @"square.and.arrow.up.on.square"),
+            withSymbol(SGActionRow(@"Copy diagnostics", @"Copy the same report to the clipboard", ^{ copyDiagnostics(); }), @"doc.on.doc"),
+            withSymbol(SGActionRow(@"Clear diagnostic log", @"Start a fresh rolling log", ^{ clearDiagnostics(); }), @"trash"),
         ]),
         SGSection(nil, @[
             withSymbol(SGActionRow(@"Export settings", nil, ^{ SGExportSettings(); }), @"square.and.arrow.up"),
