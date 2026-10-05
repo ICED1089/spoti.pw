@@ -1,3 +1,4 @@
+#import "Core/SGCore.h"
 #import "Settings/SGModPage.h"
 #import "Privacy.h"
 
@@ -38,15 +39,25 @@ static SGModSection *countersSection(void) {
 
 // The switches first and what they have stopped last, so the counters bury no setting.
 UIViewController *SGPrivacySettingsPage(void) {
-    return [[SGModPage alloc] initWithTitle:@"Privacy & clutter" intro:SGRestartNote sections:@[
-        SGSection(@"Privacy", @[
+    NSMutableArray<SGModSection *> *sections = [NSMutableArray array];
+
+    if (SGEeveePresent()) {
+        SGModRow *telemetry = SGStatRow(@"Block telemetry", ^NSString *{ return @"Eevee"; });
+        telemetry.subtitle = @"Handled by Eevee in the combined build";
+        telemetry.symbol = @"antenna.radiowaves.left.and.right.slash";
+        [sections addObject:SGSection(@"Privacy", @[telemetry])];
+    } else {
+        [sections addObject:SGSection(@"Privacy", @[
             SGWithSymbol(SGSwitchRow(@"Block telemetry", @"Spotify's own events still go out, since Recents is built from them", SGKeyBlockTelemetry), @"antenna.radiowaves.left.and.right.slash"),
-        ]),
-        SGSection(@"Clutter", @[
-            SGWithSymbol(SGOptionRow(@"Hide the video carousel in Search", nil, SGKeyHideSearchVideos), @"play.rectangle.on.rectangle"),
-            SGWithSymbol(SGOptionRow(@"Hide social proof in Search", nil, SGKeyHideSocialProof), @"person.2"),
-            SGWithSymbol(SGPageRow(@"Tips", ^UIViewController *{ return tipsPage(); }), @"lightbulb"),
-        ]),
-        countersSection(),
-    ] footer:nil];
+        ])];
+    }
+
+    [sections addObject:SGSection(@"Clutter", @[
+        SGWithSymbol(SGOptionRow(@"Hide the video carousel in Search", nil, SGKeyHideSearchVideos), @"play.rectangle.on.rectangle"),
+        SGWithSymbol(SGOptionRow(@"Hide social proof in Search", nil, SGKeyHideSocialProof), @"person.2"),
+        SGWithSymbol(SGPageRow(@"Tips", ^UIViewController *{ return tipsPage(); }), @"lightbulb"),
+    ])];
+
+    if (!SGEeveePresent()) [sections addObject:countersSection()];
+    return [[SGModPage alloc] initWithTitle:@"Privacy & clutter" intro:SGRestartNote sections:sections footer:nil];
 }
