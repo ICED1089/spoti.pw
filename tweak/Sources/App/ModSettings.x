@@ -81,14 +81,12 @@ static UIViewController *modSettingsPage(void) {
         karaoke.refreshOn = SGSingModelDidChangeNotification;
         [sections addObject:SGSection(nil, @[karaoke])];
     }
+    SGModRow *integration = pageRow(@"Eevee integration", @"checkmark.shield", ^UIViewController *{ return SGEeveeIntegrationPage(); });
+    integration.value = ^NSString *{ return SGEeveeIntegrationSummary(); };
     [sections addObjectsFromArray:@[
         SGSection(nil, parts),
         SGSection(nil, @[
-            ({
-                SGModRow *integration = pageRow(@"Eevee integration", @"checkmark.shield", ^UIViewController *{ return SGEeveeIntegrationPage(); });
-                integration.value = ^NSString *{ return SGEeveeIntegrationSummary(); };
-                integration;
-            }),
+            integration,
             pageRow(@"Privacy & clutter", @"hand.raised", ^UIViewController *{ return SGPrivacySettingsPage(); }),
             pageRow(@"Labs", @"testtube.2", ^UIViewController *{ return SGLabsPage(); }),
         ]),
