@@ -43,33 +43,33 @@ void SGEeveeApplyIntegration(void) {
         @"spotifyGlass": @NO,
         @"tabBar": @NO,
         @"nowPlayingBar": @NO,
-        @"newPlayerDesign": @NO,
+        @"newPlayerDesign": @NO
     });
     setJSONDefault(defaults, @"eeveeNowPlayingBarOptions", @{
         @"albumTint": @NO,
         @"roundArtwork": @NO,
-        @"hideConnect": @NO,
+        @"hideConnect": @NO
     });
     setJSONDefault(defaults, @"eeveePlayerOptions", @{
         @"backdrop": @NO,
         @"glassLyricsCard": @NO,
-        @"hidden": @[],
+        @"hidden": @[]
     });
     setJSONDefault(defaults, @"eeveePlayerExtrasOptions", @{
         @"doubleTap": @"off",
         @"threeZones": @YES,
-        @"haptics": @NO,
+        @"haptics": @NO
     });
     setJSONDefault(defaults, @"eeveePlaylistOptions", @{
         @"fullCover": @NO,
         @"dividers": @NO,
         @"hideFind": @NO,
-        @"hidden": @[],
+        @"hidden": @[]
     });
     setJSONDefault(defaults, @"eeveeHomeGradient", @{
         @"enabled": @NO,
         @"strength": @1,
-        @"height": @1,
+        @"height": @1
     });
     setJSONDefault(defaults, @"eeveeHomeHidden", @[]);
     setJSONDefault(defaults, @"eeveeArtistHidden", @[]);
