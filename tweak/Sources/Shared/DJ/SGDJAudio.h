@@ -28,6 +28,11 @@ typedef struct {
     uint64_t prefetchStartFrame;
     uint64_t overlapFrames;
     uint64_t incomingCueFrame;
+    // Downbeats of A occur at outgoingBarPhaseFrame + N * outgoingBarPeriodFrames.
+    // V2 waits for one of these exact frames before it opens Deck B.
+    bool beatSync;
+    uint64_t outgoingBarPeriodFrames;
+    uint64_t outgoingBarPhaseFrame;
     float deckARate;
     float deckBRate;
 } SGDJMixPlan;
@@ -53,8 +58,13 @@ void SGDJAudioClearPlan(SGDJAudio *audio);
 
 // V2 diagnostics. These are lock-free snapshots safe for the controller/settings page.
 bool SGDJAudioBufferedMixActive(SGDJAudio *audio);
+bool SGDJAudioBufferedMixArmed(SGDJAudio *audio);
 bool SGDJAudioBufferedMixCompleted(SGDJAudio *audio);
 uint64_t SGDJAudioBufferedOverlapFrames(SGDJAudio *audio);
+uint64_t SGDJAudioBufferedOverlapDoneFrames(SGDJAudio *audio);
+uint64_t SGDJAudioBufferedSyncWaitFrames(SGDJAudio *audio);
+uint64_t SGDJAudioDeckAFrames(SGDJAudio *audio);
+uint64_t SGDJAudioDeckBFrames(SGDJAudio *audio);
 uint64_t SGDJAudioBufferedUnderruns(SGDJAudio *audio);
 
 // Background analyzer consumer. Packets are untouched original Spotify PCM, interleaved stereo.
