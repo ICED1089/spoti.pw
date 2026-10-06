@@ -2,6 +2,7 @@
 #include "SGBeatItAnalyzer.h"
 
 #include "beatit/config.h"
+#include "beatit/coreml_preset.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,45 +41,16 @@ bool SGBeatItAnalyze(const float *mono, uint32_t frames, double sampleRate, SGBe
 
     @autoreleasepool {
         beatit::BeatitConfig config;
-        // BeatIt's own Beat This! preset, kept explicit so this fork ships only the direct
-        // native Core ML path instead of the CLI/plugin layer.
-        config.backend = beatit::BeatitConfig::Backend::CoreML;
+        std::unique_ptr<beatit::CoreMLPreset> preset = beatit::make_coreml_preset("beatthis");
+        if (!preset) return false;
+        preset->apply(config);
+        // Use BeatIt's maintained model I/O names, preprocessing, DBN and phase settings.
+        // This call analyzes one contiguous captured region, so sparse probing is handled by
+        // our cache/capture policy rather than asking for unavailable future Spotify PCM.
         config.model_path = path.UTF8String;
-        config.sample_rate = 22050;
-        config.frame_size = 1024;
-        config.hop_size = 441;
-        config.mel_bins = 128;
-        config.use_log_mel = true;
-        config.log_multiplier = 1000.0f;
-        config.f_min = 30.0f;
-        config.f_max = 11000.0f;
-        config.power = 1.0f;
-        config.mel_scale = beatit::BeatitConfig::MelScale::Slaney;
-        config.spectrogram_norm = beatit::BeatitConfig::SpectrogramNorm::FrameLength;
-        config.input_layout = beatit::BeatitConfig::InputLayout::FramesByMels;
-        config.fixed_frames = 1500;
-        config.window_hop_frames = 1488;
-        config.window_border_frames = 6;
-        config.min_bpm = 70.0f;
-        config.max_bpm = 180.0f;
-        config.activation_threshold = 0.5f;
-        config.output_latency_seconds = 0.016;
-        config.use_dbn = true;
-        config.dbn_mode = beatit::BeatitConfig::DBNMode::Calmdad;
-        config.dbn_use_downbeat = true;
-        config.dbn_activation_floor = 0.7f;
-        config.dbn_downbeat_phase_peak_ratio = 0.2f;
-        config.dbn_downbeat_phase_window_seconds = 2.0;
-        config.dbn_downbeat_phase_max_delay_seconds = 0.9;
-        config.dbn_project_grid = true;
-        config.dbn_grid_global_fit = true;
-        config.disable_silence_trimming = true;
-        config.use_minimal_postprocess = true;
-        config.prefer_double_time = false;
-        config.tempo_window_percent = 0;
-        config.pad_final_window = true;
-        config.execution_target = beatit::BeatitConfig::ExecutionTarget::Auto;
         config.sparse_probe_mode = false;
+        config.execution_target = beatit::BeatitConfig::ExecutionTarget::Auto;
+        config.pad_final_window = true;
         config.log_verbosity = beatit::LogVerbosity::Error;
 
         std::vector<float> samples(mono, mono + frames);
