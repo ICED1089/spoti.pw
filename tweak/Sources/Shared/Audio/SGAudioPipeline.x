@@ -26,6 +26,7 @@ static OSStatus (*originalSet)(AudioUnit, AudioUnitPropertyID, AudioUnitScope, A
 static OSStatus (*originalStart)(AudioUnit);
 static OSStatus (*originalDispose)(AudioComponentInstance);
 static atomic_bool available;
+static const char *failureReason;
 
 // Graph changes wait off the render thread. A render callback makes one attempt and never waits.
 // This protects the routes and prevents disposing a source during a pull. Setters can invoke a
@@ -86,6 +87,7 @@ static void forget(Route *route) {
 }
 
 bool SGAudioPipelineAvailable(void) { return atomic_load(&available); }
+const char *SGAudioPipelineFailureReason(void) { return failureReason; }
 bool SGAudioPipelineTapped(void) { return atomic_load(&sourceUnit) != NULL; }
 UInt32 SGAudioPipelineMaximumFrames(void) { return atomic_load(&maximumFrames); }
 void SGAudioPipelineSetPullProcessor(SGAudioPullProcessor processor) { atomic_store(&pullProcessor, processor); }
@@ -394,6 +396,7 @@ static void install(void) {
         SGAudioSourceQueueInitialize();
         if (!SGRebindImport("AudioOutputUnitStart", start, (void **)&originalStart) || !originalStart) {
             originalStart = NULL;
+            failureReason = "AudioOutputUnitStart import unavailable";
             SGLog(@"audio pipeline: Spotify output import unavailable");
             return;
         }
@@ -401,6 +404,7 @@ static void install(void) {
         if (!SGRebindImport("AudioComponentInstanceDispose", dispose, (void **)&originalDispose)) originalDispose = NULL;
         if (!SGRebindImport("AudioUnitSetProperty", setProperty, (void **)&originalSet) || !originalSet) {
             originalSet = NULL;
+            failureReason = "AudioUnitSetProperty import unavailable";
             SGLog(@"audio pipeline: mixer import unavailable; output processing only");
         }
     });
