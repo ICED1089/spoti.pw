@@ -16,7 +16,6 @@ TWEAK_NAME := spotifyglass
 # is generated from the IPA by scripts/extract-flags.py.
 spotifyglass_FILES := $(shell find Sources -name '*.m' -o -name '*.mm' -o -name '*.x' -o -name '*.swift' | sort)
 spotifyglass_CFLAGS := -fobjc-arc -ISources -I../vendor/beatit/build/source/include -I../vendor/beatit/build/source/src -DSG_VERSION=\"$(SG_VERSION)\"
-spotifyglass_CCFLAGS := -std=c++17
 spotifyglass_FRAMEWORKS := UIKit QuartzCore UniformTypeIdentifiers MediaPlayer CoreImage AudioToolbox AVFoundation CoreHaptics Accelerate Network Metal CoreML
 # Runtime swizzling instead of Substrate so the dylib has no extra dependency inside the IPA.
 spotifyglass_LOGOS_DEFAULT_GENERATOR := internal
@@ -31,6 +30,7 @@ spotifyglass_OBJ_FILES := $(SG_AUDIO)/build/ios/libsgaudio.a $(SG_BEATIT)/build/
 spotifyglass_LDFLAGS += -lc++
 Sources/Shared/AudioEffects/SGDSPCrossfeed.m_CFLAGS := -isystem $(SG_AUDIO)/libbs2b
 Sources/Shared/AudioEffects/SGDSPLiveprog.m_CFLAGS := -isystem $(SG_AUDIO)/wdl/eel2
+Sources/Shared/DJ/SGBeatItAnalyzer.mm_CFLAGS := -std=c++17
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
