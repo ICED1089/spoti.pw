@@ -3,7 +3,6 @@
 // the background or the full player appears.
 #import "Core/SGCore.h"
 #import "Diagnostics.h"
-#import "Shared/Audio/SGAudioPipeline.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <unistd.h>
@@ -116,8 +115,8 @@ NSString *SGDiagnosticsReport(void) {
          "Audio pipeline: %@%@\n\n",
          [NSDate date], @(SG_VERSION), spotify, spotifyBuild, ios, device, mode,
          SGIsDebugBuild() ? @"yes" : @"no",
-         SGAudioPipelineAvailable() ? @"available" : @"unavailable",
-         SGAudioPipelineFailureReason() ? [NSString stringWithFormat:@" (%s)", SGAudioPipelineFailureReason()] : @""];
+         SGAudioStatusAvailable() ? @"available" : @"unavailable",
+         SGAudioStatusReason().length ? [NSString stringWithFormat:@" (%@)", SGAudioStatusReason()] : @""];
 
     [report appendString:@"== current screen and mod state ==\n"];
     [report appendString:SGScreenTree() ?: @"(screen tree unavailable)\n"];
