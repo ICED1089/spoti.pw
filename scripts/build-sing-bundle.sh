@@ -18,7 +18,19 @@ rm -rf "$WORK" "$OUT"
 mkdir -p "$WORK"
 
 echo "==> Sing: preparing the verified open-source voice model"
-python3 -m venv "$WORK/venv"
+# GitHub's newest macOS image currently exposes Python 3.14 as python3. Torch/coremltools do not yet
+# support that combination. Use the stable Python 3.12 Homebrew runtime that the public export was
+# validated with instead of inheriting whatever Python the runner happens to make default.
+if command -v python3.12 >/dev/null 2>&1; then
+  HOST_PY="$(command -v python3.12)"
+elif command -v brew >/dev/null 2>&1; then
+  brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12
+  HOST_PY="$(brew --prefix python@3.12)/bin/python3.12"
+else
+  echo "Python 3.12 is required to build Sing's Core ML model" >&2
+  exit 1
+fi
+"$HOST_PY" -m venv "$WORK/venv"
 PY="$WORK/venv/bin/python"
 PIP="$WORK/venv/bin/pip"
 "$PIP" -q install --upgrade pip
