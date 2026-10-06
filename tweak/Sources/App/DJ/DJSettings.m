@@ -36,11 +36,19 @@ UIViewController *SGDJSettingsPage(void) {
     status.symbol = @"waveform.path.ecg";
     status.refreshOn = SGDJStateDidChangeNotification;
 
+    SGModRow *mix = SGStatRow(@"Current mix", ^NSString *{ return SGDJCurrentMixSummary(); });
+    mix.symbol = @"arrow.triangle.2.circlepath";
+    mix.refreshOn = SGDJStateDidChangeNotification;
+
+    SGModRow *analysis = SGStatRow(@"Analysis", ^NSString *{ return SGDJAnalysisSummary(); });
+    analysis.symbol = @"metronome";
+    analysis.refreshOn = SGDJStateDidChangeNotification;
+
     NSArray<SGModSection *> *sections = @[
         SGNotedSection(nil, @[enabled],
-                       @"DJ Mix runs locally through spoti.pw's existing audio pipeline. Normal Spotify playback is untouched while it is off."),
+                       @"DJ Mix analyzes decoded audio locally, caches BPM/key information, and applies beat-aware single-stream transitions. Unknown tracks fall back safely while they are learned."),
         SGSection(@"Mixing", @[style, intensity]),
-        SGSection(@"Player", @[indicator, status]),
+        SGSection(@"Player", @[indicator, status, mix, analysis]),
     ];
     return [[SGModPage alloc] initWithTitle:@"DJ Mix" intro:nil sections:sections footer:nil];
 }
