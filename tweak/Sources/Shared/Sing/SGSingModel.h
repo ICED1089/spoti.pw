@@ -1,6 +1,7 @@
-// Sing's voice model on this iPhone. It is not in the IPA: the app downloads its five files from the model
-// host once, each checked against the size and the SHA-256 pinned in SGSingModel.m (nothing the server says
-// is trusted), into a staging folder, and moves them into place only when every one of them is right:
+// Sing's voice model on this iPhone. Normal builds download its five files from the model host once, each
+// checked against the size and SHA-256 pinned in SGSingModel.m (nothing the server says is trusted).
+// Personal builds may instead carry the exact same checked model in SpotifyGlassSing.bundle. Downloads use
+// a staging folder and move into place only when every file is right:
 // Library/Application Support/spoti.pw/Sing/separator.mlmodelc in Spotify's container, kept out of the
 // iCloud backup. The download runs in a background URL session, so it goes on while Spotify is away; a
 // launch picks up one left running (SingModel.x), and a stopped one resumes from what already came in.
@@ -25,7 +26,8 @@ SGSingModelState SGSingModelCurrentState(void);
 int64_t SGSingModelSize(void);       // all of it, as pinned
 int64_t SGSingModelReceived(void);   // what of it is on this iPhone, checked or not
 NSString *SGSingModelFailure(void);  // why the last download stopped short, nil unless it did
-NSString *SGSingModelPath(void);     // the installed separator.mlmodelc, nil without one
+NSString *SGSingModelPath(void);     // installed or built-in separator.mlmodelc, nil without one
+BOOL SGSingModelBundled(void);        // this build carries the pinned model in SpotifyGlassSing.bundle
 NSString *SGSingModelBytesText(int64_t bytes);   // "467 MB", in the units the rows use
 
 // What keeps a download from starting: too little free space, said with how much it needs. Nil when none.
