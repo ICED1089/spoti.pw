@@ -15,7 +15,6 @@
 NSString *const SGSigningHelpURL = @"https://github.com/skopevoj/spoti.pw#signing-it-yourself";
 
 static NSString *const kWarned = @"spotifyglass.signing.warned";
-static BOOL sg_fixPending;
 
 // SecTaskCopyValueForEntitlement is not in the iOS SDK, so it is resolved at runtime like the rest
 // of the private API the mod uses. A build that cannot read its own entitlement stays quiet.
@@ -52,30 +51,7 @@ BOOL SGSigningOpensFromLockScreen(void) {
 
 // The fix is one string, so the sheet leads with it and Copy is the first action: whoever reads this
 // is on their way back to Feather to paste it into the identifier field.
-static void showFix(void) {
-    NSString *appID = SGSigningAppIdentifier();
-    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier ?: @"?";
-    UIViewController *top = SGTopController();
-    if (!appID || !top) return;
-    NSString *message = [NSString stringWithFormat:
-        @"Sign Spotify again with the bundle id set to\n\n%@\n\n"
-        @"In Feather that is the Identifier field; leave PPQ protection off, it appends a random "
-        @"string and breaks this again.\n\n"
-        @"Why: this build is installed as %@ but signed under the App ID %@. iOS opens the now "
-        @"playing card by the App ID, so it asks for an app that is not there. Nothing else in the "
-        @"mod is affected.", appID, bundleID, appID];
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"The lock screen cannot open Spotify"
-                                                                  message:message
-                                                           preferredStyle:UIAlertControllerStyleAlert];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Copy the bundle id" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        UIPasteboard.generalPasteboard.string = appID;
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Read more" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        SGOpenURL(SGSigningHelpURL);
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-    [top presentViewController:sheet animated:YES completion:nil];
-}
+
 
 // nil while the signature is sound, which is what keeps the row out of Mod Settings entirely.
 SGModRow *SGSigningWarningRow(void) {
