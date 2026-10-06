@@ -876,8 +876,12 @@ static void publishState(SGDJState state) {
 
 - (NSDictionary<NSString *, id> *)monitorSnapshot {
     SPTPlayerState *state = SGPlayerState();
-    SPTPlayerTrack *current = [state.track isKindOfClass:SPTPlayerTrack.class] ? state.track : nil;
-    SPTPlayerTrack *next = [state.future.firstObject isKindOfClass:SPTPlayerTrack.class] ? state.future.firstObject : nil;
+    id current = state.track;
+    id next = state.future.firstObject;
+    NSString *currentTitle = [current respondsToSelector:@selector(trackTitle)] ? [current trackTitle] : nil;
+    NSString *currentArtist = [current respondsToSelector:@selector(artistName)] ? [current artistName] : nil;
+    NSString *nextTitle = [next respondsToSelector:@selector(trackTitle)] ? [next trackTitle] : nil;
+    NSString *nextArtist = [next respondsToSelector:@selector(artistName)] ? [next artistName] : nil;
 
     SGDJAnalysisSnapshot a = [self bestSnapshotForURI:_track hash:_trackHash];
     SGDJAnalysisSnapshot b = {.key = -1};
@@ -905,10 +909,10 @@ static void publishState(SGDJState state) {
         @"engine": engine,
         @"status": status,
         @"style": _planValid ? recipeName(_planRecipe) : SGDJStyleName(),
-        @"currentTitle": current.trackTitle ?: @"Current song",
-        @"currentArtist": current.artistName ?: @"",
-        @"nextTitle": next.trackTitle ?: @"Next song",
-        @"nextArtist": next.artistName ?: @"",
+        @"currentTitle": currentTitle ?: @"Current song",
+        @"currentArtist": currentArtist ?: @"",
+        @"nextTitle": nextTitle ?: @"Next song",
+        @"nextArtist": nextArtist ?: @"",
         @"currentBPM": @(a.bpmConfidence >= 0.30 ? a.bpm : 0),
         @"currentConfidence": @(a.bpmConfidence),
         @"nextBPM": @(bKnown && b.bpmConfidence >= 0.30 ? b.bpm : 0),
