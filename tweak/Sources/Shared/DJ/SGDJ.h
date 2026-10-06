@@ -20,6 +20,7 @@ NSInteger SGDJIntensity(void);
 NSString *SGDJStyleName(void);
 NSString *SGDJIntensityName(void);
 SGDJState SGDJCurrentState(void);
+BOOL SGDJV2Available(void);
 NSString *SGDJPlayerStatusText(void);
 
 // Human-readable live details for Mod Settings and diagnostics.
