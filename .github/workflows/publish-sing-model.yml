@@ -1,0 +1,101 @@
+name: Publish Sing model
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-sing-model.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.1.1"
+
+      - name: Build verified Sing model
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/sing-model"
+          mkdir -p "$WORK"
+
+          brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12
+          PY="$(brew --prefix python@3.12)/bin/python3.12"
+          "$PY" -m venv "$WORK/venv"
+          P="$WORK/venv/bin/python"
+          "$WORK/venv/bin/pip" install -q --upgrade pip
+          "$WORK/venv/bin/pip" install -q \
+            "numpy<2.3" "torch==2.9.0" "coremltools==9.0" \
+            "einops==0.6.1" "beartype==0.14.1" "rotary-embedding-torch==0.3.5" \
+            librosa pyyaml
+
+          git clone -q --filter=blob:none https://github.com/john-rocky/coreai-model-zoo.git "$WORK/zoo"
+          git -C "$WORK/zoo" checkout -q 5029e6df8100650fe175d3e276fffb0177754ca1
+
+          git clone -q --filter=blob:none https://github.com/KimberleyJensen/Mel-Band-Roformer-Vocal-Model.git "$WORK/reference"
+          git -C "$WORK/reference" checkout -q 25f44ffb55ee3c301281bba21b2d6d311cb69ae2
+
+          curl -fL --retry 4 --retry-all-errors \
+            "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/ac9b0614ab3cd7f77219e18ba494dfd93956c348/MelBandRoformer.ckpt" \
+            -o "$WORK/checkpoint.ckpt"
+          echo "87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e  $WORK/checkpoint.ckpt" | shasum -a 256 -c -
+
+          "$P" harness/sing/fetch_goldens.py --output "$WORK/goldens"
+          "$P" harness/sing/export_coreml.py \
+            "$WORK/zoo" "$WORK/reference" "$WORK/checkpoint.ckpt" \
+            "$WORK/goldens/golden_raw.f32" "$WORK/export" --unpinned-tools
+
+          MODEL="$WORK/export/separator.mlmodelc"
+          test -d "$MODEL"
+
+          check() {
+            local rel="$1" size="$2" hash="$3"
+            local path="$MODEL/$rel"
+            test -f "$path"
+            test "$(stat -f '%z' "$path")" = "$size"
+            test "$(shasum -a 256 "$path" | awk '{print $1}')" = "$hash"
+          }
+
+          check "weights/weight.bin" 488986336 970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62
+          check "model.mil" 669061 966560ed5125174a98f19b94f5de04450a7112ade0e731f2236c202c0280a623
+          check "metadata.json" 2431 52a8d5e3f09e33236d495dbed5bbce1c75bac6f2a6b6097637cf214f37c1de53
+          check "coremldata.bin" 507 2090acaf7a6df72ec83857cb88d101654023a6baad222a25d0173827d3347e28
+          check "analytics/coremldata.bin" 243 f7ee4ec9b5cc1c97171bd5aad93af61e183aa0db1451ef3b775bd4e77f0b7cfd
+
+          mkdir -p "$WORK/assets"
+          cp "$MODEL/weights/weight.bin" "$WORK/assets/weights-weight.bin"
+          cp "$MODEL/model.mil" "$WORK/assets/model.mil"
+          cp "$MODEL/metadata.json" "$WORK/assets/metadata.json"
+          cp "$MODEL/coremldata.bin" "$WORK/assets/coremldata.bin"
+          cp "$MODEL/analytics/coremldata.bin" "$WORK/assets/analytics-coremldata.bin"
+          cp harness/sing/NOTICE "$WORK/assets/NOTICE"
+
+          cat > "$WORK/assets/README.txt" <<'TXT'
+          spoti.pw Sing voice model
+          
+          Optional downloadable Core ML model used by Sing. The app verifies the exact size and SHA-256
+          of every model payload before installation. Model provenance and license notices are in the
+          spoti.pw repository under harness/sing/.
+          TXT
+
+      - name: Publish downloadable model assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/sing-model/assets"
+          if ! gh release view sing-model-v1 >/dev/null 2>&1; then
+            gh release create sing-model-v1 \
+              --title "Sing voice model v1" \
+              --notes "Optional downloadable Sing voice model. The app verifies each payload before installing it."
+          fi
+          gh release upload sing-model-v1 "$WORK"/* --clobber
