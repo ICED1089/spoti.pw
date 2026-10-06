@@ -140,21 +140,13 @@ void SGDonateHoldOff(void) {
 }
 
 void SGDonateAfterTour(BOOL restarting) {
-    [NSUserDefaults.standardUserDefaults setBool:YES forKey:kAfterTourKey];
-    if (!restarting) SGOfferDonate();
+    // Personal fork: never schedule donation prompts.
 }
 
 void SGOfferDonate(void) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ offerWhenClear(kTries); });
+    // Personal fork: automatic donation prompts are disabled.
 }
 
 void SGWatchForDonate(void) {
-    nextAsk();
-    __block id observer = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                                          object:nil
-                                                                           queue:NSOperationQueue.mainQueue
-                                                                      usingBlock:^(NSNotification *note) {
-        [NSNotificationCenter.defaultCenter removeObserver:observer];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSettle * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ offerWhenClear(kTries); });
-    }];
+    // Personal fork: automatic donation prompts are disabled.
 }
