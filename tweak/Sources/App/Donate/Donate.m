@@ -11,7 +11,7 @@ UIColor *SGKofiColor(void) {
 void SGShowDonateSheet(void) {}
 SGModRow *SGDonateRow(void) { return nil; }
 void SGWatchForDonate(void) {}
-void SGDonateAfterTour(BOOL restarting) {}
+void SGDonateAfterTour(BOOL restarting) { (void)restarting; }
 BOOL SGDonateAfterTourPending(void) { return NO; }
 void SGOfferDonate(void) {}
 BOOL SGDonateShown(void) { return NO; }
