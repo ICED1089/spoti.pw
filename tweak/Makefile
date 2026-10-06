@@ -14,9 +14,10 @@ TWEAK_NAME := spotifyglass
 
 # Every source under Sources/, so a new feature needs no Makefile edit. Shared/Flags/SGFlagList.m
 # is generated from the IPA by scripts/extract-flags.py.
-spotifyglass_FILES := $(shell find Sources -name '*.m' -o -name '*.x' -o -name '*.swift' | sort)
-spotifyglass_CFLAGS := -fobjc-arc -ISources -DSG_VERSION=\"$(SG_VERSION)\"
-spotifyglass_FRAMEWORKS := UIKit QuartzCore UniformTypeIdentifiers MediaPlayer CoreImage AudioToolbox AVFoundation CoreHaptics Accelerate Network Metal
+spotifyglass_FILES := $(shell find Sources -name '*.m' -o -name '*.mm' -o -name '*.x' -o -name '*.swift' | sort)
+spotifyglass_CFLAGS := -fobjc-arc -ISources -I../vendor/beatit/build/source/include -I../vendor/beatit/build/source/src -DSG_VERSION=\"$(SG_VERSION)\"
+spotifyglass_CCFLAGS := -std=c++17
+spotifyglass_FRAMEWORKS := UIKit QuartzCore UniformTypeIdentifiers MediaPlayer CoreImage AudioToolbox AVFoundation CoreHaptics Accelerate Network Metal CoreML
 # Runtime swizzling instead of Substrate so the dylib has no extra dependency inside the IPA.
 spotifyglass_LOGOS_DEFAULT_GENERATOR := internal
 
@@ -25,17 +26,23 @@ spotifyglass_LOGOS_DEFAULT_GENERATOR := internal
 # vendor/audio/build/ios/, which `clean` leaves alone and later builds only update. Listed as an object file
 # it is a prerequisite of the link and linked in; only the two files using it see its headers.
 SG_AUDIO := ../vendor/audio
-spotifyglass_OBJ_FILES := $(SG_AUDIO)/build/ios/libsgaudio.a
+SG_BEATIT := ../vendor/beatit
+spotifyglass_OBJ_FILES := $(SG_AUDIO)/build/ios/libsgaudio.a $(SG_BEATIT)/build/ios/libbeatit.a
+spotifyglass_LDFLAGS += -lc++
 Sources/Shared/AudioEffects/SGDSPCrossfeed.m_CFLAGS := -isystem $(SG_AUDIO)/libbs2b
 Sources/Shared/AudioEffects/SGDSPLiveprog.m_CFLAGS := -isystem $(SG_AUDIO)/wdl/eel2
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 # The library is brought up to date before the tweak's instance builds, so the link finds it current.
-spotifyglass.all.tweak.variables: sg-audio
+spotifyglass.all.tweak.variables: sg-audio sg-beatit
 .PHONY: sg-audio
 sg-audio:
 	@$(MAKE) --no-print-directory -C $(SG_AUDIO) PLATFORM=ios
+
+.PHONY: sg-beatit
+sg-beatit:
+	@$(MAKE) --no-print-directory -C $(SG_BEATIT) PLATFORM=ios
 
 # The layers of Sources/ stay apart (scripts/check-layers.sh): an import across them fails the build.
 # A copy of tweak/ made without the scripts beside it builds unchecked.
