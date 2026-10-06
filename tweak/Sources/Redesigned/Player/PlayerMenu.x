@@ -18,7 +18,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Shared/Player/SpeedPitch.h"
 #import "Shared/DJ/SGDJ.h"
-#import "App/DJ/DJMonitor.h"
+#import "Shared/DJ/SGDJMonitor.h"
 #import "Player.h"
 
 // A sheet this soon after the ⋯'s tap is the player's.
