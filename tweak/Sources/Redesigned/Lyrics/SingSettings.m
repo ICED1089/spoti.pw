@@ -31,7 +31,8 @@ static void tell(NSString *title, NSString *message) {
 static NSString *modelStatus(void) {
     int64_t received = SGSingModelReceived(), size = SGSingModelSize();
     switch (SGSingModelCurrentState()) {
-        case SGSingModelInstalled: return [@"Downloaded · " stringByAppendingString:SGSingModelBytesText(size)];
+        case SGSingModelInstalled:
+            return [(SGSingModelBundled() ? @"Built in · " : @"Downloaded · ") stringByAppendingString:SGSingModelBytesText(size)];
         case SGSingModelChecking: return @"Checking…";
         case SGSingModelDownloading:
             return [NSString stringWithFormat:@"Downloading %lld %% · %lld of %@", received * 100 / size,
@@ -49,8 +50,13 @@ static void explainModel(void) {
     NSString *failure = SGSingModelFailure();
     switch (SGSingModelCurrentState()) {
         case SGSingModelInstalled:
-            tell(@"Voice model", [NSString stringWithFormat:@"It takes %@ on this iPhone. Remove it to free the space; Sing is unavailable without it.",
-                                  SGSingModelBytesText(SGSingModelSize())]);
+            if (SGSingModelBundled()) {
+                tell(@"Voice model", [NSString stringWithFormat:@"This personal build includes Sing's verified %@ voice model. It runs only on this iPhone and does not need a separate download.",
+                                      SGSingModelBytesText(SGSingModelSize())]);
+            } else {
+                tell(@"Voice model", [NSString stringWithFormat:@"It takes %@ on this iPhone. Remove it to free the space; Sing is unavailable without it.",
+                                      SGSingModelBytesText(SGSingModelSize())]);
+            }
             break;
         case SGSingModelMissing:
             tell(failure ? @"Download failed" : @"Voice model",
@@ -118,18 +124,18 @@ static SGModSection *karaokeSection(void) {
     model.refreshOn = SGSingModelDidChangeNotification;
 
     SGModRow *download = SGActionRow(@"Download voice model", nil, ^{ startDownload(); });
-    download.visible = ^BOOL { return SGSingModelCurrentState() == SGSingModelMissing; };
+    download.visible = ^BOOL { return !SGSingModelBundled() && SGSingModelCurrentState() == SGSingModelMissing; };
     SGModRow *cancel = SGActionRow(@"Cancel download", nil, ^{ SGSingModelCancel(); });
     cancel.visible = ^BOOL {
         SGSingModelState state = SGSingModelCurrentState();
-        return state == SGSingModelDownloading || state == SGSingModelChecking;
+        return !SGSingModelBundled() && (state == SGSingModelDownloading || state == SGSingModelChecking);
     };
     // Removing also takes what a stopped download kept, which can be most of the model.
     SGModRow *remove = SGActionRow(@"Remove voice model", nil, ^{ confirmRemove(); });
     remove.color = SGRed();
     remove.visible = ^BOOL {
         SGSingModelState state = SGSingModelCurrentState();
-        return state == SGSingModelInstalled || (state == SGSingModelMissing && SGSingModelReceived() > 0);
+        return !SGSingModelBundled() && (state == SGSingModelInstalled || (state == SGSingModelMissing && SGSingModelReceived() > 0));
     };
     return SGNotedSection(@"Karaoke", @[sing, model, download, cancel, remove], footer());
 }
