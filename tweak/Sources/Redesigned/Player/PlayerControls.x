@@ -420,24 +420,39 @@ static void watchForSeekTaps(UIView *host, UILabel *taken, UILabel *remaining) {
 static NSAttributedString *djIndicatorText(void) {
     NSString *status = SGDJPlayerStatusText();
     if (!status.length) return nil;
-    NSString *text = [@"●  " stringByAppendingString:status];
-    NSMutableAttributedString *styled = [[NSMutableAttributedString alloc] initWithString:text attributes:@{
-        NSFontAttributeName: [UIFont systemFontOfSize:9 weight:UIFontWeightSemibold],
-        NSForegroundColorAttributeName: [UIColor.whiteColor colorWithAlphaComponent:0.68],
-        NSKernAttributeName: @0.5,
+    return [[NSAttributedString alloc] initWithString:status attributes:@{
+        NSFontAttributeName: [UIFont systemFontOfSize:10 weight:UIFontWeightBold],
+        NSForegroundColorAttributeName: [UIColor.whiteColor colorWithAlphaComponent:0.78],
+        NSKernAttributeName: @0.45,
     }];
-    [styled addAttribute:NSForegroundColorAttributeName value:UIColor.systemGreenColor range:NSMakeRange(0, 1)];
-    return styled;
 }
 
 static void refreshDJIndicator(void) {
     UILabel *label = sg_djIndicator;
     if (!label) return;
     NSAttributedString *text = djIndicatorText();
+    BOOL wasHidden = label.hidden || label.alpha < 0.01;
+    if (!text.length) {
+        if (label.hidden) return;
+        [UIView animateWithDuration:0.18 animations:^{
+            label.alpha = 0;
+        } completion:^(BOOL finished) {
+            if (!djIndicatorText().length) label.hidden = YES;
+        }];
+        return;
+    }
+
     label.attributedText = text;
-    label.hidden = !text.length;
-    if (text.length) {
-        [label sizeToFit];
+    [label sizeToFit];
+    label.hidden = NO;
+    if (wasHidden) {
+        label.alpha = 0;
+        [UIView animateWithDuration:0.28
+                              delay:0
+                            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState
+                         animations:^{ label.alpha = 1; }
+                         completion:nil];
+    } else {
         label.alpha = 1;
     }
 }
