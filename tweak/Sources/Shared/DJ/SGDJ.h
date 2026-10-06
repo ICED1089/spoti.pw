@@ -22,7 +22,9 @@ NSString *SGDJIntensityName(void);
 SGDJState SGDJCurrentState(void);
 NSString *SGDJPlayerStatusText(void);
 
-// Main-thread control API for the transition engine. It is intentionally separate from the
-// real-time render path: audio callbacks only consume already-published transition parameters.
-void SGDJSetState(SGDJState state);
+// Human-readable live details for Mod Settings and diagnostics.
+NSString *SGDJCurrentMixSummary(void);
+NSString *SGDJAnalysisSummary(void);
+
+// Re-read the stored switch/options and start or stop the real engine immediately.
 void SGDJRefreshConfiguration(void);
