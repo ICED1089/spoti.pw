@@ -920,6 +920,9 @@ NSString *SGDJIntensityName(void) {
 SGDJState SGDJCurrentState(void) {
     return (SGDJState)atomic_load(&sg_state);
 }
+BOOL SGDJV2Available(void) {
+    return SGDJAudioBoundarySupported(controller().audio);
+}
 NSString *SGDJPlayerStatusText(void) {
     if (!SGDJEnabled() || !SGDJIndicatorEnabled()) return nil;
     switch (SGDJCurrentState()) {
