@@ -101,7 +101,7 @@ static double clampDouble(double value, double low, double high) {
 - (instancetype)initWithTrack:(uint64_t)track {
     if (!(self = [super init])) return nil;
     _track = track;
-    _beatPCM = [NSMutableData dataWithCapacity:(NSUInteger)SGDJAudioSampleRate * 30 * sizeof(float)];
+    _beatPCM = [NSMutableData dataWithCapacity:(NSUInteger)SGDJAudioSampleRate * 60 * sizeof(float)];
     const double rate = (double)SGDJAudioSampleRate / kKeyDownsample;
     for (int n = 0; n < kKeyNotes; n++) {
         int midi = 36 + n;
@@ -144,7 +144,9 @@ static double clampDouble(double value, double low, double high) {
 - (void)tryBeatIt {
     if (_beatReady) return;
     double seconds = _beatPCM.length / (double)(sizeof(float) * SGDJAudioSampleRate);
-    double threshold = _beatAttempts == 0 ? 20.0 : 29.0;
+    // Beat This! uses an approximately 30 s model window. Give the official preset a full
+    // first window, then one longer retry on a different amount of musical evidence.
+    double threshold = _beatAttempts == 0 ? 32.0 : 60.0;
     if (_beatAttempts >= 2 || seconds < threshold) return;
 
     SGBeatItAnalysis analysis = {0};
@@ -204,7 +206,7 @@ static double clampDouble(double value, double low, double high) {
         }
     }
 
-    const NSUInteger maxBytes = (NSUInteger)SGDJAudioSampleRate * 30 * sizeof(float);
+    const NSUInteger maxBytes = (NSUInteger)SGDJAudioSampleRate * 60 * sizeof(float);
     if (_beatPCM.length < maxBytes) {
         NSUInteger room = maxBytes - _beatPCM.length;
         NSUInteger bytes = MIN(room, (NSUInteger)monoCount * sizeof(float));
@@ -800,7 +802,16 @@ static void publishState(SGDJState state) {
 - (NSString *)analysisSummary {
     if (!_trackHash) return @"No song";
     SGDJAnalysisSnapshot value = [self bestSnapshotForURI:_track hash:_trackHash];
-    if (value.bpmConfidence < 0.30) return [NSString stringWithFormat:@"BeatIt analyzing · %.0f s", value.analyzedSeconds];
+    __block unsigned attempts = 0;
+    dispatch_sync(_analysisQueue, ^{
+        SGDJAccumulator *acc = self.analysis[@(self.trackHash)];
+        if (acc) attempts = acc->_beatAttempts;
+    });
+    if (value.bpmConfidence < 0.30) {
+        if (attempts >= 2) return @"BeatIt no grid · safe fallback";
+        NSString *phase = attempts ? @"BeatIt retry collecting" : @"BeatIt collecting";
+        return [NSString stringWithFormat:@"%@ · %.0f s", phase, MIN(value.analyzedSeconds, 60.0)];
+    }
     NSString *bpm = [NSString stringWithFormat:@"%.0f BPM", value.bpm];
     NSString *key = value.keyConfidence >= 0.15 ? camelotText(value) : @"key uncertain";
     return [NSString stringWithFormat:@"BeatIt · %@ · %@ · %.0f s", bpm, key, value.analyzedSeconds];
