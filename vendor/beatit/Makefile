@@ -17,6 +17,7 @@ COMMON := -target arm64-apple-ios16.0 -isysroot $(SDK) -Os -fPIC -fvisibility=hi
 
 # BeatIt's native Core ML + DBN path only. Torch/CLI/plugin loader code is intentionally excluded.
 SOURCES_CPP := \
+	src/beatit/coreml/preset.cpp \
 	src/beatit/audio/dsp.cpp \
 	src/beatit/audio/features.cpp \
 	src/beatit/runtime/logging.cpp \
