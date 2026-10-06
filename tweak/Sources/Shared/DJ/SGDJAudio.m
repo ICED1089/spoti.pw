@@ -28,17 +28,19 @@ struct SGDJAudio {
     atomic_uint_fast64_t planOutgoingTrack, planIncomingTrack;
     atomic_uint_fast64_t planOutgoingStart, planOutgoingEnd, planIncomingFrames;
     atomic_uint_fast64_t planPrefetchStart, planOverlapFrames, planIncomingCue;
-    atomic_uint planRecipe, planStrengthBits, planBuffered, planARateBits, planBRateBits;
+    atomic_uint_fast64_t planBarPeriod, planBarPhase;
+    atomic_uint planRecipe, planStrengthBits, planBuffered, planBeatSync, planARateBits, planBRateBits;
 
     SGDJDeck deckA, deckB;
     unsigned activePlanGeneration;
     uint64_t audibleTrack, audibleFrame;
-    uint64_t cueRemaining, overlapTotal, overlapDone;
-    bool v2Prefetching, v2BoundarySeen, v2Mixing, v2AfterMix;
+    uint64_t cueRemaining, overlapTotal, overlapDone, syncWaitRemaining;
+    bool v2Prefetching, v2BoundarySeen, v2Armed, v2Mixing, v2AfterMix;
     float lowA[2], lowB[2];
 
-    atomic_bool bufferedMixActive, bufferedMixCompleted;
-    atomic_uint_fast64_t bufferedOverlapFrames, bufferedUnderruns;
+    atomic_bool bufferedMixActive, bufferedMixArmed, bufferedMixCompleted;
+    atomic_uint_fast64_t bufferedOverlapFrames, bufferedOverlapDoneFrames, bufferedSyncWaitFrames;
+    atomic_uint_fast64_t bufferedDeckAFrames, bufferedDeckBFrames, bufferedUnderruns;
 
     uint64_t renderTrack;
     float low[2];
@@ -69,10 +71,10 @@ static float ease(float value) {
 
 typedef struct {
     uint64_t outgoingTrack, incomingTrack, outgoingStart, outgoingEnd, incomingFrames;
-    uint64_t prefetchStart, overlapFrames, incomingCue;
+    uint64_t prefetchStart, overlapFrames, incomingCue, barPeriod, barPhase;
     uint32_t recipe;
     float strength, deckARate, deckBRate;
-    bool buffered;
+    bool buffered, beatSync;
     unsigned generation;
 } RenderPlan;
 
@@ -89,11 +91,14 @@ static bool readPlan(SGDJAudio *audio, RenderPlan *plan) {
             .prefetchStart = atomic_load_explicit(&audio->planPrefetchStart, memory_order_relaxed),
             .overlapFrames = atomic_load_explicit(&audio->planOverlapFrames, memory_order_relaxed),
             .incomingCue = atomic_load_explicit(&audio->planIncomingCue, memory_order_relaxed),
+            .barPeriod = atomic_load_explicit(&audio->planBarPeriod, memory_order_relaxed),
+            .barPhase = atomic_load_explicit(&audio->planBarPhase, memory_order_relaxed),
             .recipe = atomic_load_explicit(&audio->planRecipe, memory_order_relaxed),
             .strength = floatOfBits(atomic_load_explicit(&audio->planStrengthBits, memory_order_relaxed)),
             .deckARate = floatOfBits(atomic_load_explicit(&audio->planARateBits, memory_order_relaxed)),
             .deckBRate = floatOfBits(atomic_load_explicit(&audio->planBRateBits, memory_order_relaxed)),
             .buffered = atomic_load_explicit(&audio->planBuffered, memory_order_relaxed) != 0,
+            .beatSync = atomic_load_explicit(&audio->planBeatSync, memory_order_relaxed) != 0,
             .generation = before,
         };
         unsigned after = atomic_load_explicit(&audio->planSequence, memory_order_acquire);
@@ -112,6 +117,14 @@ static void publishTrack(SGDJAudio *audio, uint64_t track, uint64_t frame) {
     atomic_store_explicit(&audio->track, track, memory_order_release);
     atomic_store_explicit(&audio->sourceFrame, frame, memory_order_release);
     atomic_fetch_add_explicit(&audio->trackEpoch, 1, memory_order_acq_rel);
+}
+
+static void publishV2Status(SGDJAudio *audio) {
+    atomic_store_explicit(&audio->bufferedMixArmed, audio->v2Armed, memory_order_release);
+    atomic_store_explicit(&audio->bufferedOverlapDoneFrames, audio->overlapDone, memory_order_relaxed);
+    atomic_store_explicit(&audio->bufferedSyncWaitFrames, audio->syncWaitRemaining, memory_order_relaxed);
+    atomic_store_explicit(&audio->bufferedDeckAFrames, audio->deckA.count, memory_order_relaxed);
+    atomic_store_explicit(&audio->bufferedDeckBFrames, audio->deckB.count, memory_order_relaxed);
 }
 
 #pragma mark - deck buffers
@@ -411,12 +424,16 @@ static void resetV2(SGDJAudio *audio, const RenderPlan *plan) {
     audio->audibleTrack = atomic_load_explicit(&audio->track, memory_order_acquire);
     audio->audibleFrame = atomic_load_explicit(&audio->sourceFrame, memory_order_acquire);
     audio->cueRemaining = plan->incomingCue;
-    audio->overlapTotal = audio->overlapDone = 0;
-    audio->v2Prefetching = audio->v2BoundarySeen = audio->v2Mixing = audio->v2AfterMix = false;
+    audio->overlapTotal = audio->overlapDone = audio->syncWaitRemaining = 0;
+    audio->v2Prefetching = audio->v2BoundarySeen = audio->v2Armed = audio->v2Mixing = audio->v2AfterMix = false;
     audio->lowA[0] = audio->lowA[1] = audio->lowB[0] = audio->lowB[1] = 0;
     atomic_store_explicit(&audio->bufferedMixActive, false, memory_order_release);
+    atomic_store_explicit(&audio->bufferedMixArmed, false, memory_order_release);
     atomic_store_explicit(&audio->bufferedMixCompleted, false, memory_order_release);
     atomic_store_explicit(&audio->bufferedOverlapFrames, 0, memory_order_relaxed);
+    atomic_store_explicit(&audio->bufferedOverlapDoneFrames, 0, memory_order_relaxed);
+    atomic_store_explicit(&audio->bufferedSyncWaitFrames, 0, memory_order_relaxed);
+    publishV2Status(audio);
 }
 
 static void copyInterleavedToABL(const float *pcm, uint32_t frames, AudioBufferList *data, uint32_t offset) {
@@ -429,31 +446,40 @@ static void copyInterleavedToABL(const float *pcm, uint32_t frames, AudioBufferL
 
 static void mixCurves(uint32_t recipe, float p, float strength,
                       float *gainA, float *gainB, float *lowA, float *lowB) {
+    // Every recipe is sample-continuous: A=1/B=0 at the first sample and A=0/B=1 at the last.
+    // Intensity changes the shape/EQ, never those endpoints.
     p = ease(p);
     strength = fmaxf(0.65f, fminf(strength, 1.25f));
-    float a = cosf(p * (float)M_PI_2);
-    float b = sinf(p * (float)M_PI_2);
-    float la = 1, lb = 1;
 
+    float shaped = p;
     if (recipe == SGDJRecipeClub) {
-        a = 1.0f - 0.55f * ease(clamp01((p - 0.45f) / 0.55f));
-        b = 0.55f + 0.45f * ease(clamp01(p / 0.55f));
-        la = 1.0f - 0.96f * ease(clamp01((p - 0.35f) / 0.22f));
-        lb = 0.04f + 0.96f * ease(clamp01((p - 0.48f) / 0.22f));
+        // Hold A longer, then make the handoff around the middle.
+        shaped = ease(clamp01((p - 0.12f) / 0.76f));
     } else if (recipe == SGDJRecipeQuick) {
-        a = cosf(ease(clamp01(p * 1.15f)) * (float)M_PI_2);
-        b = sinf(ease(clamp01(p * 1.15f)) * (float)M_PI_2);
-        la = 1.0f - 0.85f * ease(clamp01((p - 0.30f) / 0.30f));
-        lb = 0.15f + 0.85f * ease(clamp01((p - 0.45f) / 0.25f));
-    } else {
-        la = 1.0f - 0.82f * ease(clamp01((p - 0.32f) / 0.36f));
-        lb = 0.18f + 0.82f * ease(clamp01((p - 0.48f) / 0.34f));
+        shaped = ease(clamp01((p - 0.04f) / 0.84f));
     }
 
-    *gainA = 1.0f - (1.0f - a) * strength;
-    *gainB = 1.0f - (1.0f - b) * strength;
-    *lowA = 1.0f - (1.0f - la) * strength;
-    *lowB = 1.0f - (1.0f - lb) * strength;
+    float a = cosf(shaped * (float)M_PI_2);
+    float b = sinf(shaped * (float)M_PI_2);
+    float la = 1.0f, lb = 1.0f;
+
+    if (recipe == SGDJRecipeClub) {
+        la = 1.0f - 0.96f * ease(clamp01((p - 0.30f) / 0.24f));
+        lb = 0.04f + 0.96f * ease(clamp01((p - 0.46f) / 0.24f));
+    } else if (recipe == SGDJRecipeQuick) {
+        la = 1.0f - 0.82f * ease(clamp01((p - 0.24f) / 0.34f));
+        lb = 0.18f + 0.82f * ease(clamp01((p - 0.42f) / 0.30f));
+    } else {
+        la = 1.0f - 0.86f * ease(clamp01((p - 0.28f) / 0.38f));
+        lb = 0.14f + 0.86f * ease(clamp01((p - 0.46f) / 0.38f));
+    }
+
+    // Intensity affects the bass swap only. Gain endpoints stay exact to avoid clicks.
+    float eqStrength = fmaxf(0.55f, fminf(strength, 1.0f));
+    *gainA = a;
+    *gainB = b;
+    *lowA = 1.0f - (1.0f - la) * eqStrength;
+    *lowB = 1.0f - (1.0f - lb) * eqStrength;
 }
 
 static void filterDeckSample(float sample, float *low, float lowGain, float *out) {
@@ -480,11 +506,19 @@ static OSStatus ensureIncoming(SGDJAudio *audio, const RenderPlan *plan, uint32_
     return noErr;
 }
 
+static uint64_t waitToNextBar(const RenderPlan *plan, uint64_t sourceFrame) {
+    if (!plan->beatSync || !plan->barPeriod) return 0;
+    uint64_t phase = plan->barPhase % plan->barPeriod;
+    if (sourceFrame <= phase) return phase - sourceFrame;
+    uint64_t rem = (sourceFrame - phase) % plan->barPeriod;
+    return rem ? plan->barPeriod - rem : 0;
+}
+
 static OSStatus processV2Chunk(SGDJAudio *audio, const RenderPlan *plan, UInt32 frames,
                                AudioBufferList *data, UInt32 offset, const AudioTimeStamp *time) {
     if (audio->activePlanGeneration != plan->generation) resetV2(audio, plan);
 
-    // Before the prefetch window, behave exactly like normal Spotify.
+    // Before the prefetch window, playback is byte-for-byte the normal Spotify stream.
     if (!audio->v2Prefetching && audio->audibleTrack == plan->outgoingTrack &&
         audio->audibleFrame < plan->prefetchStart) {
         uint64_t remaining = plan->prefetchStart - audio->audibleFrame;
@@ -493,81 +527,93 @@ static OSStatus processV2Chunk(SGDJAudio *audio, const RenderPlan *plan, UInt32 
             OSStatus status = pullDirect(audio, plan, offset, direct, data, time);
             if (status != noErr) return status;
             if (direct == frames) return noErr;
-            offset += direct; frames -= direct;
+            offset += direct;
+            frames -= direct;
         }
         audio->v2Prefetching = true;
     }
-
     if (!audio->v2Prefetching) audio->v2Prefetching = true;
 
-    // After a completed overlap, drain the already-consumed B prefix before returning to direct pulls.
+    // After the overlap, continue from the exact next buffered B sample, then rejoin Spotify's
+    // sequential decoder. No gain jump is introduced here: the mix ends at B gain == 1.0.
     if (audio->v2AfterMix) {
         while (frames) {
             uint32_t have = deckRender(&audio->deckB, 1.0f, audio->outB, frames);
             if (have) {
                 copyInterleavedToABL(audio->outB, have, data, offset);
-                offset += have; frames -= have;
-                audio->audibleTrack = plan->incomingTrack;
-                audio->audibleFrame += have;
+                offset += have;
+                frames -= have;
                 continue;
             }
-            // Fractional tail shorter than one renderable frame: it is below a sample of timing
-            // significance. The decoder is already positioned immediately after this local prefix.
             deckReset(&audio->deckB);
             atomic_store_explicit(&audio->bufferedMixCompleted, true, memory_order_release);
+            publishV2Status(audio);
             if (frames) return pullDirect(audio, plan, offset, frames, data, time);
         }
+        publishV2Status(audio);
         return noErr;
     }
 
     if (audio->v2Mixing) {
+        // V2 intentionally uses unity-rate local decks. Cheap per-buffer interpolation caused audible
+        // crackle and timing discontinuities. Tempo differences are handled by choosing a shorter mix;
+        // exact beat-1 alignment is preserved at the start.
         OSStatus incomingStatus = ensureIncoming(audio, plan, frames, time);
         if (incomingStatus != noErr) return incomingStatus;
-        uint32_t possibleA = deckOutputCapacity(&audio->deckA, plan->deckARate);
-        uint32_t possibleB = deckOutputCapacity(&audio->deckB, plan->deckBRate);
+
+        uint32_t possibleA = deckOutputCapacity(&audio->deckA, 1.0f);
+        uint32_t possibleB = deckOutputCapacity(&audio->deckB, 1.0f);
         uint32_t mixed = MIN(frames, MIN(possibleA, possibleB));
         if (!mixed) {
             atomic_fetch_add_explicit(&audio->bufferedUnderruns, 1, memory_order_relaxed);
             audio->v2Mixing = false;
             audio->v2AfterMix = true;
+            audio->v2Armed = false;
+            atomic_store_explicit(&audio->bufferedMixActive, false, memory_order_release);
+            publishV2Status(audio);
             return processV2Chunk(audio, plan, frames, data, offset, time);
         }
-        // Render exactly the amount both decks can supply so one deck can never be consumed
-        // further than the audio that was actually mixed.
-        uint32_t aFrames = deckRender(&audio->deckA, plan->deckARate, audio->outA, mixed);
-        uint32_t bFrames = deckRender(&audio->deckB, plan->deckBRate, audio->outB, mixed);
+
+        uint32_t aFrames = deckRender(&audio->deckA, 1.0f, audio->outA, mixed);
+        uint32_t bFrames = deckRender(&audio->deckB, 1.0f, audio->outB, mixed);
         mixed = MIN(aFrames, bFrames);
 
         float *left = data->mBuffers[0].mData, *right = data->mBuffers[1].mData;
         for (uint32_t i = 0; i < mixed; i++) {
-            float p = audio->overlapTotal > 1 ?
-                (float)((double)(audio->overlapDone + i) / (double)(audio->overlapTotal - 1)) : 1;
+            float p = audio->overlapTotal > 1
+                ? (float)((double)(audio->overlapDone + i) / (double)(audio->overlapTotal - 1)) : 1.0f;
             float ga, gb, la, lb;
             mixCurves(plan->recipe, p, plan->strength, &ga, &gb, &la, &lb);
+
+            // Equal-power gains normally have unit energy. For the shaped Club/Quick portions,
+            // normalize only when needed. The scale is exactly 1.0 at both transition endpoints.
+            float norm = 1.0f / fmaxf(1.0f, sqrtf(ga * ga + gb * gb));
             for (unsigned ch = 0; ch < 2; ch++) {
                 float af, bf;
                 filterDeckSample(audio->outA[(size_t)i * 2 + ch], &audio->lowA[ch], la, &af);
                 filterDeckSample(audio->outB[(size_t)i * 2 + ch], &audio->lowB[ch], lb, &bf);
-                // 0.86 headroom prevents normal full-scale masters from clipping during overlap.
-                float sample = 0.86f * (af * ga + bf * gb);
+                float sample = (af * ga + bf * gb) * norm;
                 sample = fmaxf(-1.0f, fminf(1.0f, sample));
-                if (ch == 0) left[offset + i] = sample; else right[offset + i] = sample;
+                if (ch == 0) left[offset + i] = sample;
+                else right[offset + i] = sample;
             }
         }
+
         audio->overlapDone += mixed;
-        audio->audibleFrame += mixed;
-        if (audio->overlapDone >= audio->overlapTotal || deckOutputCapacity(&audio->deckA, plan->deckARate) <= 1) {
+        atomic_store_explicit(&audio->bufferedOverlapDoneFrames, audio->overlapDone, memory_order_relaxed);
+        if (audio->overlapDone >= audio->overlapTotal || deckOutputCapacity(&audio->deckA, 1.0f) <= 1) {
             audio->v2Mixing = false;
             audio->v2AfterMix = true;
+            audio->v2Armed = false;
             deckReset(&audio->deckA);
             atomic_store_explicit(&audio->bufferedMixActive, false, memory_order_release);
         }
+        publishV2Status(audio);
         if (mixed < frames) return processV2Chunk(audio, plan, frames - mixed, data, offset + mixed, time);
         return noErr;
     }
 
-    // Build a local lead by pulling only PCM Spotify has already verified in its decoder queue.
-    // Required A frames are pulled normally; additional frames are never speculative.
+    // Keep enough A for the current output while the decoder is still on A.
     while (audio->deckA.count < frames + 2 && !audio->v2BoundarySeen) {
         UInt32 pulled = 0;
         OSStatus status = pullIntoDecks(audio, plan, frames + 2 - audio->deckA.count, false, time, &pulled);
@@ -575,62 +621,102 @@ static OSStatus processV2Chunk(SGDJAudio *audio, const RenderPlan *plan, UInt32 
         if (!pulled) break;
     }
 
+    // Build a large A tail before crossing the decoder boundary. A full extra bar gives us room to
+    // wait for the exact next A downbeat after B is ready.
+    uint64_t targetLead64 = plan->overlapFrames + (plan->beatSync ? plan->barPeriod : 0);
+    targetLead64 = MIN(targetLead64, (uint64_t)kDeckCapacityFrames - SGDJAudioMaximumFrames);
+    if (!audio->v2BoundarySeen && audio->deckA.count < targetLead64) {
+        UInt32 pulled = 0;
+        uint32_t want = MIN((uint32_t)SGDJAudioMaximumFrames, (uint32_t)(targetLead64 - audio->deckA.count));
+        OSStatus status = pullIntoDecks(audio, plan, want, true, time, &pulled);
+        if (status != noErr) return status;
+    }
+
+    if (audio->v2BoundarySeen) {
+        // Pull B ahead while A is retained locally. First discard only the cached cue up to B's
+        // downbeat, then require real B audio before arming the transition.
+        uint64_t desiredB64 = plan->overlapFrames;
+        desiredB64 = MIN(desiredB64, (uint64_t)kDeckCapacityFrames - SGDJAudioMaximumFrames);
+        uint32_t attempts = 0;
+        while ((audio->cueRemaining || audio->deckB.count < desiredB64) && attempts++ < 8) {
+            uint64_t need = audio->cueRemaining + (desiredB64 - MIN(desiredB64, (uint64_t)audio->deckB.count));
+            uint32_t want = (uint32_t)MIN((uint64_t)SGDJAudioMaximumFrames, MAX((uint64_t)1, need));
+            UInt32 pulled = 0;
+            OSStatus status = pullIntoDecks(audio, plan, want, true, time, &pulled);
+            if (status != noErr) return status;
+            if (!pulled) break;
+        }
+
+        if (!audio->v2Armed && !audio->cueRemaining) {
+            uint64_t wait = waitToNextBar(plan, audio->audibleFrame);
+            uint64_t needA = wait + plan->overlapFrames;
+            uint64_t haveA = deckOutputCapacity(&audio->deckA, 1.0f);
+            uint64_t haveB = deckOutputCapacity(&audio->deckB, 1.0f);
+            if (haveA >= needA && haveB >= plan->overlapFrames &&
+                plan->overlapFrames >= (uint64_t)SGDJAudioSampleRate / 2) {
+                audio->syncWaitRemaining = wait;
+                audio->overlapTotal = plan->overlapFrames;
+                audio->overlapDone = 0;
+                audio->v2Armed = true;
+                atomic_store_explicit(&audio->bufferedOverlapFrames, plan->overlapFrames, memory_order_relaxed);
+                atomic_store_explicit(&audio->bufferedSyncWaitFrames, wait, memory_order_relaxed);
+                atomic_store_explicit(&audio->bufferedMixArmed, true, memory_order_release);
+            }
+        }
+    }
+
+    // Once both decks are ready, keep A alone until the exact planned A downbeat. Split the current
+    // AudioUnit callback if necessary so B opens on the exact sample, not the next callback boundary.
+    if (audio->v2Armed) {
+        if (audio->syncWaitRemaining) {
+            uint32_t alone = (uint32_t)MIN((uint64_t)frames, audio->syncWaitRemaining);
+            uint32_t rendered = deckRender(&audio->deckA, 1.0f, audio->outA, alone);
+            if (rendered != alone) {
+                atomic_fetch_add_explicit(&audio->bufferedUnderruns, 1, memory_order_relaxed);
+                audio->v2Armed = false;
+                publishV2Status(audio);
+            } else {
+                copyInterleavedToABL(audio->outA, rendered, data, offset);
+                audio->audibleFrame += rendered;
+                audio->syncWaitRemaining -= rendered;
+                atomic_store_explicit(&audio->bufferedSyncWaitFrames, audio->syncWaitRemaining, memory_order_relaxed);
+                publishV2Status(audio);
+                if (rendered == frames) return noErr;
+                offset += rendered;
+                frames -= rendered;
+            }
+        }
+        if (audio->v2Armed && audio->syncWaitRemaining == 0) {
+            audio->v2Mixing = true;
+            atomic_store_explicit(&audio->bufferedMixActive, true, memory_order_release);
+            publishV2Status(audio);
+            return processV2Chunk(audio, plan, frames, data, offset, time);
+        }
+    }
+
+    // Not armed yet: keep playing retained A while B is being prepared.
     uint32_t renderedA = deckRender(&audio->deckA, 1.0f, audio->outA, frames);
     if (renderedA) {
         copyInterleavedToABL(audio->outA, renderedA, data, offset);
         audio->audibleTrack = plan->outgoingTrack;
         audio->audibleFrame += renderedA;
     }
-
-    // Target decoder lead includes the planned overlap and any incoming cue that will be skipped.
-    uint64_t targetLead64 = plan->overlapFrames + plan->incomingCue;
-    targetLead64 = MIN(targetLead64, (uint64_t)kDeckCapacityFrames - SGDJAudioMaximumFrames);
-    uint32_t targetLead = (uint32_t)targetLead64;
-    if (!audio->v2BoundarySeen && audio->deckA.count < targetLead) {
-        uint32_t want = MIN((uint32_t)SGDJAudioMaximumFrames, targetLead - audio->deckA.count);
-        UInt32 pulled = 0;
-        OSStatus status = pullIntoDecks(audio, plan, want, true, time, &pulled);
-        if (status != noErr) return status;
-    }
-
-    if (audio->v2BoundarySeen) {
-        // Consume B's selected cue point using only verified/normal sequential source pulls while
-        // A continues from its retained tail.
-        uint32_t desiredB = requiredDeckInput(frames, plan->deckBRate);
-        uint32_t attempts = 0;
-        while ((audio->cueRemaining || audio->deckB.count < desiredB) && attempts++ < 3) {
-            UInt32 pulled = 0;
-            uint32_t want = MIN((uint32_t)SGDJAudioMaximumFrames,
-                                (uint32_t)MIN((uint64_t)SGDJAudioMaximumFrames,
-                                             audio->cueRemaining + desiredB - MIN(desiredB, audio->deckB.count)));
-            OSStatus status = pullIntoDecks(audio, plan, MAX(want, (uint32_t)1), true, time, &pulled);
-            if (status != noErr) return status;
-            if (!pulled) break;
-        }
-        uint32_t possibleA = deckOutputCapacity(&audio->deckA, plan->deckARate);
-        uint32_t possibleB = deckOutputCapacity(&audio->deckB, plan->deckBRate);
-        uint32_t overlap = (uint32_t)MIN(plan->overlapFrames, (uint64_t)possibleA);
-        if (!audio->cueRemaining && possibleB >= MIN(frames, overlap) && overlap >= SGDJAudioSampleRate / 4) {
-            audio->overlapTotal = overlap;
-            audio->overlapDone = 0;
-            audio->v2Mixing = true;
-            audio->audibleTrack = plan->outgoingTrack;
-            atomic_store_explicit(&audio->bufferedOverlapFrames, overlap, memory_order_relaxed);
-            atomic_store_explicit(&audio->bufferedMixActive, true, memory_order_release);
-        }
-    }
+    publishV2Status(audio);
 
     if (renderedA < frames) {
-        // If there was not enough retained A to sustain the requested V2 lead, fail soft into
-        // sequential B rather than outputting silence or stalling the real-time callback.
+        // We could not satisfy the V2 safety condition before A ran out. Do not claim an overlap:
+        // fail closed into sequential B and record the underrun for diagnostics/UI.
         atomic_fetch_add_explicit(&audio->bufferedUnderruns, 1, memory_order_relaxed);
         audio->v2AfterMix = true;
-        audio->v2Mixing = false;
+        audio->v2Armed = audio->v2Mixing = false;
+        atomic_store_explicit(&audio->bufferedMixActive, false, memory_order_release);
+        atomic_store_explicit(&audio->bufferedMixArmed, false, memory_order_release);
         if (audio->deckB.count) {
             uint32_t b = deckRender(&audio->deckB, 1.0f, audio->outB, frames - renderedA);
             copyInterleavedToABL(audio->outB, b, data, offset + renderedA);
             renderedA += b;
         }
+        publishV2Status(audio);
         if (renderedA < frames)
             return pullDirect(audio, plan, offset + renderedA, frames - renderedA, data, time);
     }
@@ -770,9 +856,12 @@ void SGDJAudioSetPlan(SGDJAudio *audio, SGDJMixPlan plan) {
     atomic_store_explicit(&audio->planPrefetchStart, plan.prefetchStartFrame, memory_order_relaxed);
     atomic_store_explicit(&audio->planOverlapFrames, plan.overlapFrames, memory_order_relaxed);
     atomic_store_explicit(&audio->planIncomingCue, plan.incomingCueFrame, memory_order_relaxed);
+    atomic_store_explicit(&audio->planBarPeriod, plan.outgoingBarPeriodFrames, memory_order_relaxed);
+    atomic_store_explicit(&audio->planBarPhase, plan.outgoingBarPhaseFrame, memory_order_relaxed);
     atomic_store_explicit(&audio->planRecipe, plan.recipe, memory_order_relaxed);
     atomic_store_explicit(&audio->planStrengthBits, bitsOfFloat(plan.strength), memory_order_relaxed);
     atomic_store_explicit(&audio->planBuffered, plan.bufferedOverlap ? 1u : 0u, memory_order_relaxed);
+    atomic_store_explicit(&audio->planBeatSync, plan.beatSync ? 1u : 0u, memory_order_relaxed);
     atomic_store_explicit(&audio->planARateBits, bitsOfFloat(plan.deckARate > 0 ? plan.deckARate : 1), memory_order_relaxed);
     atomic_store_explicit(&audio->planBRateBits, bitsOfFloat(plan.deckBRate > 0 ? plan.deckBRate : 1), memory_order_relaxed);
     atomic_fetch_add_explicit(&audio->planSequence, 1, memory_order_release);
@@ -785,11 +874,26 @@ void SGDJAudioClearPlan(SGDJAudio *audio) {
 bool SGDJAudioBufferedMixActive(SGDJAudio *audio) {
     return audio && atomic_load_explicit(&audio->bufferedMixActive, memory_order_acquire);
 }
+bool SGDJAudioBufferedMixArmed(SGDJAudio *audio) {
+    return audio && atomic_load_explicit(&audio->bufferedMixArmed, memory_order_acquire);
+}
 bool SGDJAudioBufferedMixCompleted(SGDJAudio *audio) {
     return audio && atomic_load_explicit(&audio->bufferedMixCompleted, memory_order_acquire);
 }
 uint64_t SGDJAudioBufferedOverlapFrames(SGDJAudio *audio) {
     return audio ? atomic_load_explicit(&audio->bufferedOverlapFrames, memory_order_relaxed) : 0;
+}
+uint64_t SGDJAudioBufferedOverlapDoneFrames(SGDJAudio *audio) {
+    return audio ? atomic_load_explicit(&audio->bufferedOverlapDoneFrames, memory_order_relaxed) : 0;
+}
+uint64_t SGDJAudioBufferedSyncWaitFrames(SGDJAudio *audio) {
+    return audio ? atomic_load_explicit(&audio->bufferedSyncWaitFrames, memory_order_relaxed) : 0;
+}
+uint64_t SGDJAudioDeckAFrames(SGDJAudio *audio) {
+    return audio ? atomic_load_explicit(&audio->bufferedDeckAFrames, memory_order_relaxed) : 0;
+}
+uint64_t SGDJAudioDeckBFrames(SGDJAudio *audio) {
+    return audio ? atomic_load_explicit(&audio->bufferedDeckBFrames, memory_order_relaxed) : 0;
 }
 uint64_t SGDJAudioBufferedUnderruns(SGDJAudio *audio) {
     return audio ? atomic_load_explicit(&audio->bufferedUnderruns, memory_order_relaxed) : 0;
