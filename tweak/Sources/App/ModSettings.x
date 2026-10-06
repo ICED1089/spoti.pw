@@ -27,6 +27,7 @@
 #import "Shared/LiveActivity/LiveActivity.h"
 #import "App/About/About.h"
 #import "App/EeveeIntegration.h"
+#import "App/DJ/DJSettings.h"
 #import "Pages.h"
 
 static const CGFloat kRowHeight = 56;
@@ -55,10 +56,14 @@ static UIViewController *modSettingsPage(void) {
     audioEffects.value = ^NSString *{ return SGDSPSummary(); };
     // Home & Library holds only the native look's switches, and Albums only the redesign's; the Live
     // Activity works under both, and only where ActivityKit's card does.
+    SGModRow *djMix = pageRow(@"DJ Mix", @"waveform", ^UIViewController *{ return SGDJSettingsPage(); });
+    djMix.value = ^NSString *{ return SGDJSettingsSummary(); };
+    djMix.refreshOn = SGDJStateDidChangeNotification;
     NSMutableArray<SGModRow *> *parts = [NSMutableArray arrayWithArray:@[
         pageRow(@"Navbar", @"dock.rectangle", ^UIViewController *{ return SGNavbarPage(); }),
         pageRow(@"Player", @"play.circle", ^UIViewController *{ return SGPlayerSettingsPage(); }),
         pageRow(@"Lyrics", @"quote.bubble", ^UIViewController *{ return SGLyricsSettingsPage(); }),
+        djMix,
         audioEffects,
     ]];
     if (@available(iOS 17.0, *)) {
