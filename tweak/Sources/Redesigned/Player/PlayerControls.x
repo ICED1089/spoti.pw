@@ -21,6 +21,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Shared/Haptics/Haptics.h"
+#import "Shared/DJ/SGDJ.h"
 #import "Player.h"
 
 static const CGFloat kSkipGlyphSize = 32, kPlayGlyphSize = 44;
@@ -31,13 +32,14 @@ static const NSTimeInterval kSpinnerCheck = 0.6;
 // one sent before the player caught up, for this long; after it the player's word is final.
 static const NSTimeInterval kTapTrust = 1.2;
 
-static char kPreviousKey, kNextKey, kPlayKey, kGlyphKey, kTakeKey, kRemainingKey;
+static char kPreviousKey, kNextKey, kPlayKey, kGlyphKey, kTakeKey, kRemainingKey, kDJIndicatorKey;
 static __weak UIView *sg_playView;
 static __weak UIButton *sg_playButton;
 static CFTimeInterval sg_tappedUntil;
 static BOOL sg_tappedPaused;
 static __weak SGRGlyphView *sg_playGlyph;
 static __weak UIView *sg_controlsHost;
+static __weak UILabel *sg_djIndicator;
 
 void SGRPlayerVanish(UIView *view) {
     if (!view) return;
@@ -414,12 +416,61 @@ static void watchForSeekTaps(UIView *host, UILabel *taken, UILabel *remaining) {
     watcher.remaining = remaining;
 }
 
+static NSAttributedString *djIndicatorText(void) {
+    NSString *status = SGDJPlayerStatusText();
+    if (!status.length) return nil;
+    NSString *text = [@"●  " stringByAppendingString:status];
+    NSMutableAttributedString *styled = [[NSMutableAttributedString alloc] initWithString:text attributes:@{
+        NSFontAttributeName: [UIFont systemFontOfSize:9 weight:UIFontWeightSemibold],
+        NSForegroundColorAttributeName: [UIColor.whiteColor colorWithAlphaComponent:0.68],
+        NSKernAttributeName: @0.5,
+    }];
+    [styled addAttribute:NSForegroundColorAttributeName value:UIColor.systemGreenColor range:NSMakeRange(0, 1)];
+    return styled;
+}
+
+static void refreshDJIndicator(void) {
+    UILabel *label = sg_djIndicator;
+    if (!label) return;
+    NSAttributedString *text = djIndicatorText();
+    label.attributedText = text;
+    label.hidden = !text.length;
+    if (text.length) {
+        [label sizeToFit];
+        label.alpha = 1;
+    }
+}
+
+static void layOutDJIndicator(UIView *host) {
+    UIView *parent = host.superview;
+    if (!parent) return;
+    UILabel *label = objc_getAssociatedObject(host, &kDJIndicatorKey);
+    if (!label) {
+        label = [UILabel new];
+        label.userInteractionEnabled = NO;
+        label.accessibilityElementsHidden = YES;
+        label.textAlignment = NSTextAlignmentCenter;
+        objc_setAssociatedObject(host, &kDJIndicatorKey, label, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (label.superview != parent) [parent addSubview:label];
+    else [parent bringSubviewToFront:label];
+    sg_djIndicator = label;
+    refreshDJIndicator();
+    if (label.hidden) return;
+
+    CGRect duration = [host convertRect:host.bounds toView:parent];
+    CGFloat width = MIN(parent.bounds.size.width - 32, MAX(110, label.bounds.size.width));
+    CGFloat height = 13;
+    label.frame = CGRectMake(CGRectGetMidX(duration) - width / 2, CGRectGetMaxY(duration) + 3, width, height);
+}
+
 static void layOutTimes(UIViewController *unit) {
     UIView *host = unit.viewIfLoaded;
     if (!host) return;
     UILabel *taken = monospaced(host, @"now-playing-time-take-label-internal", &kTakeKey);
     UILabel *remaining = monospaced(host, @"now-playing-time-remaning-label-internal", &kRemainingKey);
     watchForSeekTaps(host, taken, remaining);
+    layOutDJIndicator(host);
     // Whether Spotify's font has digits of one width shows in the descriptor's feature settings.
     if (!taken) return;
     static dispatch_once_t once;
@@ -445,6 +496,9 @@ static void layOutTimes(UIViewController *unit) {
     %init;
     sg_controlsWatcher = [SGRPlayerControlsWatcher new];
     SGAddPlayerStateObserver(sg_controlsWatcher);
+    [NSNotificationCenter.defaultCenter addObserverForName:SGDJStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        refreshDJIndicator();
+    }];
     SGRequireClasses(@[
         @"_TtC20NowPlaying_ModesImpl28PlaybackControlsElementsUnit",
         @"_TtC20NowPlaying_ModesImpl19DurationElementUnit",
