@@ -17,6 +17,8 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Shared/Player/SpeedPitch.h"
+#import "Shared/DJ/SGDJ.h"
+#import "App/DJ/DJMonitor.h"
 #import "Player.h"
 
 // A sheet this soon after the ⋯'s tap is the player's.
@@ -658,6 +660,15 @@ static void openSpeedPitch(SGRPlayerMenuTakeover *t) {
     });
 }
 
+static void openDJMonitor(SGRPlayerMenuTakeover *t) {
+    UIViewController *player = t.player;
+    finish(t, @"DJ Mix opens its live monitor", ^{
+        if (!player || player.presentedViewController) return;
+        UIViewController *monitor = SGDJMonitorPage();
+        [player presentViewController:monitor animated:YES completion:nil];
+    });
+}
+
 #pragma mark building the menu
 
 static UIMenu *group(NSArray<UIMenuElement *> *children) {
@@ -688,6 +699,15 @@ static UIAction *speedAndPitchAction(SGRPlayerMenuTakeover *t) {
     return action;
 }
 
+static UIAction *djMixAction(SGRPlayerMenuTakeover *t) {
+    __weak SGRPlayerMenuTakeover *weak = t;
+    UIAction *action = [UIAction actionWithTitle:@"DJ Mix" image:symbol(@"waveform.path.ecg") identifier:nil handler:^(UIAction *sender) {
+        pick(weak, ^(SGRPlayerMenuTakeover *strong) { openDJMonitor(strong); });
+    }];
+    action.subtitle = SGDJEnabled() ? SGDJCurrentMixSummary() : @"Off";
+    return action;
+}
+
 static UIMenu *menuFor(SGRPlayerMenuTakeover *t) {
     NSArray<SGRPlayerMenuSpotifyRow *> *rows = t.rows ?: @[];
     // Tiles in the Music app's order, Share last.
@@ -714,6 +734,7 @@ static UIMenu *menuFor(SGRPlayerMenuTakeover *t) {
         [main insertObject:tiles.lastObject atIndex:0];
         [tiles removeLastObject];
     }
+    [main addObject:djMixAction(t)];
     [main addObject:speedAndPitchAction(t)];
     if (more.count == 1) {
         [feedback addObject:more.firstObject];
