@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 #import <mach/mach.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
@@ -20,33 +21,71 @@ static intptr_t slideForHeader(const struct mach_header_64 *header) {
     return 0;
 }
 
+static BOOL sameExecutablePath(const char *imageName, NSString *guestPath) {
+    if (!imageName || !guestPath.length) return NO;
+    NSString *image = [NSString stringWithUTF8String:imageName];
+    if (!image.length) return NO;
+
+    // LiveContainer may differ only by /private or another path-normalisation detail.
+    NSString *a = image.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+    NSString *b = guestPath.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+    if ([a isEqualToString:b]) return YES;
+
+    // Keep a conservative fallback for LiveContainer's guest bundle path spelling.
+    return [image.lastPathComponent isEqualToString:guestPath.lastPathComponent] &&
+           [image.stringByDeletingLastPathComponent.lastPathComponent
+               isEqualToString:guestPath.stringByDeletingLastPathComponent.lastPathComponent];
+}
+
 static const struct mach_header_64 *mainExecutable(intptr_t *slide) {
-    // Normal sideloads expose Spotify as the process' MH_EXECUTE image. LiveContainer instead
-    // converts the guest executable to MH_DYLIB and dlopens it inside the LiveContainer host.
-    // LiveContainer deliberately redirects dlsym(RTLD_MAIN_ONLY, "__mh_execute_header") to the
-    // guest app's real Mach-O header, so ask for that first. This also works on a normal install.
+    // LiveContainer replaces NSBundle.mainBundle with the guest app's bundle. Unlike the process'
+    // MH_EXECUTE image, this therefore names Spotify itself. Match that exact guest executable
+    // against the loaded-image list instead of relying on LiveContainer's dyld/dlsym hooks: an
+    // injected tweak can bypass those hooks and otherwise see the LiveContainer host.
+    NSString *guestPath = NSBundle.mainBundle.executablePath;
+    SGLog(@"rebind: guest executable path %@", guestPath ?: @"(unavailable)");
+
+    if (guestPath.length) {
+        uint32_t count = _dyld_image_count();
+        for (uint32_t i = 0; i < count; i++) {
+            const struct mach_header *candidate = _dyld_get_image_header(i);
+            const char *name = _dyld_get_image_name(i);
+            if (!candidate || candidate->magic != MH_MAGIC_64 || !sameExecutablePath(name, guestPath)) continue;
+            *slide = _dyld_get_image_vmaddr_slide(i);
+            SGLog(@"rebind: selected guest image %s, filetype %u", name ?: "unknown", candidate->filetype);
+            return (const struct mach_header_64 *)candidate;
+        }
+        SGLog(@"rebind: guest executable was not found in the visible dyld image list");
+    }
+
+    // Normal installs and some loader configurations still make RTLD_MAIN_ONLY useful. Only trust
+    // it when dladdr resolves to the guest executable; never silently accept the LiveContainer host.
     const struct mach_header_64 *header =
         (const struct mach_header_64 *)dlsym(RTLD_MAIN_ONLY, "__mh_execute_header");
     if (header && header->magic == MH_MAGIC_64) {
-        *slide = slideForHeader(header);
         Dl_info info = {0};
         dladdr(header, &info);
-        SGLog(@"rebind: selected main image via RTLD_MAIN_ONLY (%s), filetype %u",
-              info.dli_fname ?: "unknown", header->filetype);
-        return header;
+        if (!guestPath.length || sameExecutablePath(info.dli_fname, guestPath)) {
+            *slide = slideForHeader(header);
+            SGLog(@"rebind: selected main image via RTLD_MAIN_ONLY (%s), filetype %u",
+                  info.dli_fname ?: "unknown", header->filetype);
+            return header;
+        }
+        SGLog(@"rebind: rejected RTLD_MAIN_ONLY image %s because it is not the guest executable",
+              info.dli_fname ?: "unknown");
     }
 
-    // Fallback for environments where RTLD_MAIN_ONLY does not expose __mh_execute_header.
+    // Final fallback for a conventional process where there is one real executable.
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const struct mach_header *candidate = _dyld_get_image_header(i);
         if (!candidate || candidate->magic != MH_MAGIC_64 || candidate->filetype != MH_EXECUTE) continue;
+        const char *name = _dyld_get_image_name(i);
+        if (guestPath.length && !sameExecutablePath(name, guestPath)) continue;
         *slide = _dyld_get_image_vmaddr_slide(i);
-        Dl_info info = {0};
-        dladdr(candidate, &info);
-        SGLog(@"rebind: selected MH_EXECUTE fallback image (%s)", info.dli_fname ?: "unknown");
+        SGLog(@"rebind: selected MH_EXECUTE fallback image (%s)", name ?: "unknown");
         return (const struct mach_header_64 *)candidate;
     }
-    SGLog(@"rebind: no usable main executable image found");
+    SGLog(@"rebind: no usable guest executable image found");
     return NULL;
 }
 
