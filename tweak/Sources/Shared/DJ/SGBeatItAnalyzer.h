@@ -15,4 +15,10 @@ typedef struct {
 
 // Runs BeatIt's MIT-licensed Beat This! Core ML + DBN pipeline off the audio thread.
 // Input is mono float PCM at the supplied sample rate. Returns false rather than guessing.
+#ifdef __cplusplus
+extern "C" {
+#endif
 bool SGBeatItAnalyze(const float *mono, uint32_t frames, double sampleRate, SGBeatItAnalysis *out);
+#ifdef __cplusplus
+}
+#endif
