@@ -322,6 +322,7 @@ static NSString *recipeName(SGDJRecipe recipe) {
 @property (nonatomic) BOOL interrupted;
 @property (nonatomic) BOOL planValid;
 @property (nonatomic) BOOL planBuffered;
+@property (nonatomic) BOOL planBeatSync;
 @property (nonatomic) uint64_t planTrack, planNext;
 @property (nonatomic) double planStart, planEnd, incomingDuration, tempoRatio;
 @property (nonatomic) SGDJRecipe planRecipe;
@@ -493,6 +494,7 @@ static void publishState(SGDJState state) {
     SGDJAudioClearPlan(_audio);
     _planValid = NO;
     _planBuffered = NO;
+    _planBeatSync = NO;
     _planTrack = _planNext = 0;
     _planReason = nil;
     if (SGDJEnabled()) publishState(SGDJStateIdle);
@@ -576,29 +578,31 @@ static void publishState(SGDJState state) {
         if (incomingCueSeconds < 0.08) incomingCueSeconds = 0;
     }
 
-    // V2 independently nudges the two buffered decks with a very small high-quality-safe varispeed.
-    // Splitting the correction around the geometric-mean tempo halves the pitch/tempo change per deck.
-    float rateA = 1, rateB = 1;
-    if (a.bpmConfidence >= 0.30 && bKnown && b.bpmConfidence >= 0.30 && a.bpm > 0 && bNorm > 0) {
-        double target = sqrt(a.bpm * bNorm);
-        double candidateA = target / a.bpm;
-        double candidateB = target / bNorm;
-        double limit = SGDJIntensity() == 0 ? 0.015 : SGDJIntensity() == 2 ? 0.035 : 0.025;
-        if (fabs(candidateA - 1) <= limit && fabs(candidateB - 1) <= limit) {
-            rateA = (float)candidateA;
-            rateB = (float)candidateB;
-        } else if (!reason) {
-            reason = @"tempo gap outside V2 micro-match range";
+    // V2 now keeps buffered decks at unity rate. The previous cheap local resampler could
+    // crack and introduce phase discontinuities. We align beat 1 exactly and shorten the overlap
+    // when tempos differ enough that the grids would audibly drift.
+    BOOL beatSync = a.bpmConfidence >= 0.30 && bKnown && b.bpmConfidence >= 0.30 &&
+                    a.beatPeriod > 0 && b.beatPeriod > 0;
+    if (beatSync && a.bpm > 0 && bNorm > 0) {
+        double drift = fabs(bNorm / a.bpm - 1.0);
+        NSInteger maxBeats = drift < 0.006 ? 16 : drift < 0.015 ? 8 : drift < 0.035 ? 4 : 2;
+        double safeSeconds = maxBeats * a.beatPeriod;
+        overlapSeconds = MIN(overlapSeconds, safeSeconds);
+        if (drift >= 0.035) {
+            recipe = SGDJRecipeQuick;
+            if (!reason) reason = @"tempo drift: downbeat-synced short overlap";
         }
     }
 
+    float rateA = 1.0f, rateB = 1.0f;
     BOOL buffered = SGDJAudioBoundarySupported(_audio);
     uint64_t overlapFrames = (uint64_t)llround(overlapSeconds * SGDJAudioSampleRate);
     uint64_t cueFrames = (uint64_t)llround(incomingCueSeconds * SGDJAudioSampleRate);
 
     // At most 12 seconds are retained. Starting roughly 2.2x the required lead before the song end
     // lets the decoder advance no faster than ~2x while audible A remains at normal real-time pace.
-    double leadSeconds = overlapSeconds + incomingCueSeconds;
+    double outgoingBarSeconds = beatSync ? a.beatPeriod * 4.0 : 0;
+    double leadSeconds = overlapSeconds + incomingCueSeconds + outgoingBarSeconds;
     double prefetchStart = MAX(0, state.duration - (leadSeconds * 2.2 + 1.0));
 
     double incoming = clampDouble(overlapSeconds, 0.8, 8.0);
@@ -623,6 +627,9 @@ static void publishState(SGDJState state) {
         .prefetchStartFrame = (uint64_t)llround(prefetchStart * SGDJAudioSampleRate),
         .overlapFrames = overlapFrames,
         .incomingCueFrame = cueFrames,
+        .beatSync = beatSync,
+        .outgoingBarPeriodFrames = beatSync ? (uint64_t)llround(a.beatPeriod * 4.0 * SGDJAudioSampleRate) : 0,
+        .outgoingBarPhaseFrame = beatSync ? (uint64_t)llround(a.barPhase * SGDJAudioSampleRate) : 0,
         .deckARate = rateA,
         .deckBRate = rateB,
     };
@@ -630,6 +637,7 @@ static void publishState(SGDJState state) {
 
     _planValid = YES;
     _planBuffered = buffered;
+    _planBeatSync = beatSync;
     _planTrack = _trackHash;
     _planNext = _nextHash;
     _planStart = mixStart;
@@ -639,11 +647,11 @@ static void publishState(SGDJState state) {
     _planRecipe = recipe;
     _planReason = reason;
 
-    SGLog(@"dj plan: A %016llx %.1f BPM/%.2f %@/%.2f -> B %016llx %.1f BPM/%.2f %@/%.2f; %@ %@ %.2f s overlap, B cue %.2f s, deck rates %.4f/%.4f, prefetch %.2f s, boundary %@%@",
+    SGLog(@"dj plan: A %016llx %.1f BPM/%.2f %@/%.2f -> B %016llx %.1f BPM/%.2f %@/%.2f; %@ %@ %.2f s overlap, B downbeat cue %.2f s, beat-sync %@, prefetch %.2f s, boundary %@%@",
           (unsigned long long)_trackHash, a.bpm, a.bpmConfidence, camelotText(a), a.keyConfidence,
           (unsigned long long)_nextHash, b.bpm, b.bpmConfidence, camelotText(b), b.keyConfidence,
           buffered ? @"V2" : @"V1", recipeName(recipe), overlapSeconds, incomingCueSeconds,
-          rateA, rateB, prefetchStart, SGDJAudioBoundarySupported(_audio) ? @"verified" : @"unavailable",
+          beatSync ? @"yes" : @"no", prefetchStart, SGDJAudioBoundarySupported(_audio) ? @"verified" : @"unavailable",
           reason ? [@"; " stringByAppendingString:reason] : @"");
     publishState(SGDJStatePreparing);
 }
@@ -766,6 +774,7 @@ static void publishState(SGDJState state) {
             SGDJAudioClearPlan(_audio);
             _planValid = NO;
             _planBuffered = NO;
+            _planBeatSync = NO;
             _planTrack = _planNext = 0;
             _planReason = nil;
             publishState(SGDJStateIdle);
@@ -865,6 +874,56 @@ static void publishState(SGDJState state) {
     return _nextHash ? @"Ready for next track" : @"Ready";
 }
 
+- (NSDictionary<NSString *, id> *)monitorSnapshot {
+    SPTPlayerState *state = SGPlayerState();
+    SPTPlayerTrack *current = [state.track isKindOfClass:SPTPlayerTrack.class] ? state.track : nil;
+    SPTPlayerTrack *next = [state.future.firstObject isKindOfClass:SPTPlayerTrack.class] ? state.future.firstObject : nil;
+
+    SGDJAnalysisSnapshot a = [self bestSnapshotForURI:_track hash:_trackHash];
+    SGDJAnalysisSnapshot b = {.key = -1};
+    BOOL bKnown = [self cachedSnapshotForURI:_nextTrack into:&b];
+
+    uint64_t total = SGDJAudioBufferedOverlapFrames(_audio);
+    uint64_t done = SGDJAudioBufferedOverlapDoneFrames(_audio);
+    double progress = total ? MIN(1.0, done / (double)total) : 0;
+    double planned = _planValid ? MAX(0, _planEnd - _planStart) : 0;
+    double actual = total / (double)SGDJAudioSampleRate;
+    double syncWait = SGDJAudioBufferedSyncWaitFrames(_audio) / (double)SGDJAudioSampleRate;
+    double deckA = SGDJAudioDeckAFrames(_audio) / (double)SGDJAudioSampleRate;
+    double deckB = SGDJAudioDeckBFrames(_audio) / (double)SGDJAudioSampleRate;
+    uint64_t underruns = SGDJAudioBufferedUnderruns(_audio);
+
+    NSString *engine = SGDJV2Available() ? @"V2" : @"V1";
+    NSString *status = @"Ready";
+    if (!SGDJEnabled()) status = @"Off";
+    else if (SGDJAudioBufferedMixActive(_audio)) status = @"Mixing";
+    else if (SGDJAudioBufferedMixArmed(_audio)) status = syncWait > 0.001 ? @"Beat sync" : @"Armed";
+    else if (_planValid) status = @"Buffering";
+    else if (!SGDJAudioAttached(_audio)) status = @"Waiting for audio";
+
+    return @{
+        @"engine": engine,
+        @"status": status,
+        @"style": _planValid ? recipeName(_planRecipe) : SGDJStyleName(),
+        @"currentTitle": current.trackTitle ?: @"Current song",
+        @"currentArtist": current.artistName ?: @"",
+        @"nextTitle": next.trackTitle ?: @"Next song",
+        @"nextArtist": next.artistName ?: @"",
+        @"currentBPM": @(a.bpmConfidence >= 0.30 ? a.bpm : 0),
+        @"currentConfidence": @(a.bpmConfidence),
+        @"nextBPM": @(bKnown && b.bpmConfidence >= 0.30 ? b.bpm : 0),
+        @"nextConfidence": @(bKnown ? b.bpmConfidence : 0),
+        @"beatSync": @(_planBeatSync),
+        @"plannedOverlap": @(planned),
+        @"actualOverlap": @(actual),
+        @"progress": @(progress),
+        @"syncWait": @(syncWait),
+        @"deckA": @(deckA),
+        @"deckB": @(deckB),
+        @"underruns": @(underruns),
+    };
+}
+
 - (NSString *)analysisSummary {
     if (!_trackHash) return @"No song";
     SGDJAnalysisSnapshot value = [self bestSnapshotForURI:_track hash:_trackHash];
@@ -936,6 +995,10 @@ NSString *SGDJCurrentMixSummary(void) {
 }
 NSString *SGDJAnalysisSummary(void) {
     return [controller() analysisSummary];
+}
+NSDictionary<NSString *, id> *SGDJMonitorSnapshot(void) {
+    if (!NSThread.isMainThread) return @{};
+    return [controller() monitorSnapshot];
 }
 void SGDJRefreshConfiguration(void) {
     if (!NSThread.isMainThread) {
