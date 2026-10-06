@@ -747,8 +747,6 @@ bool SGDJAudioBoundarySupported(SGDJAudio *audio) {
 void SGDJAudioSetTrack(SGDJAudio *audio, uint64_t track, uint64_t sourceFrame) {
     if (!audio) return;
     publishTrack(audio, track, sourceFrame);
-    audio->audibleTrack = track;
-    audio->audibleFrame = sourceFrame;
 }
 void SGDJAudioExpectTrack(SGDJAudio *audio, uint64_t track) {
     if (!audio) return;
