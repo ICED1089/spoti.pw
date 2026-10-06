@@ -14,8 +14,6 @@
 
 NSString *const SGSigningHelpURL = @"https://github.com/skopevoj/spoti.pw#signing-it-yourself";
 
-static NSString *const kWarned = @"spotifyglass.signing.warned";
-
 // SecTaskCopyValueForEntitlement is not in the iOS SDK, so it is resolved at runtime like the rest
 // of the private API the mod uses. A build that cannot read its own entitlement stays quiet.
 NSString *SGSigningAppIdentifier(void) {
