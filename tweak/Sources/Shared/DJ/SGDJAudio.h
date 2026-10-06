@@ -21,6 +21,15 @@ typedef struct {
     uint64_t incomingFrames;
     SGDJRecipe recipe;
     float strength;
+
+    // V2 buffered-deck plan. The source decoder is allowed to run ahead only through Spotify's
+    // already verified queue. Audio not yet presented is retained locally so A and B can overlap.
+    bool bufferedOverlap;
+    uint64_t prefetchStartFrame;
+    uint64_t overlapFrames;
+    uint64_t incomingCueFrame;
+    float deckARate;
+    float deckBRate;
 } SGDJMixPlan;
 
 typedef struct SGDJAudio SGDJAudio;
@@ -41,6 +50,12 @@ uint64_t SGDJAudioCurrentFrame(SGDJAudio *audio);
 
 void SGDJAudioSetPlan(SGDJAudio *audio, SGDJMixPlan plan);
 void SGDJAudioClearPlan(SGDJAudio *audio);
+
+// V2 diagnostics. These are lock-free snapshots safe for the controller/settings page.
+bool SGDJAudioBufferedMixActive(SGDJAudio *audio);
+bool SGDJAudioBufferedMixCompleted(SGDJAudio *audio);
+uint64_t SGDJAudioBufferedOverlapFrames(SGDJAudio *audio);
+uint64_t SGDJAudioBufferedUnderruns(SGDJAudio *audio);
 
 // Background analyzer consumer. Packets are untouched original Spotify PCM, interleaved stereo.
 bool SGDJAudioReadAnalysisPacket(SGDJAudio *audio, SGAudioStamp *stamp, float *pcm);
