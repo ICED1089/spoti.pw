@@ -86,6 +86,8 @@ TWEAK_DEB="$(ls -t "$ROOT"/tweak/packages/*.deb | head -1)"
 echo "    $TWEAK_DEB"
 
 FILES=("$TWEAK_DEB")
+DJ_BUNDLE="$ROOT/vendor/beatit/build/SpotifyGlassDJ.bundle"
+[ -d "$DJ_BUNDLE" ] && FILES+=("$DJ_BUNDLE")
 [ "$WITH_FLEX" = 1 ] && FILES+=("$FLEX_DEB")
 
 # The Live Activity (Shared/LiveActivity) draws in a widget extension of its own.
