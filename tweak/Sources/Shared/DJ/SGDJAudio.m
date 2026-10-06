@@ -502,32 +502,41 @@ static OSStatus processV2Chunk(SGDJAudio *audio, const RenderPlan *plan, UInt32 
 
     // After a completed overlap, drain the already-consumed B prefix before returning to direct pulls.
     if (audio->v2AfterMix) {
-        uint32_t have = deckRender(&audio->deckB, 1.0f, audio->outB, frames);
-        if (have) {
-            copyInterleavedToABL(audio->outB, have, data, offset);
-            offset += have; frames -= have;
-            audio->audibleTrack = plan->incomingTrack;
-            audio->audibleFrame += have;
-        }
-        if (!frames) return noErr;
-        if (!audio->deckB.count) {
+        while (frames) {
+            uint32_t have = deckRender(&audio->deckB, 1.0f, audio->outB, frames);
+            if (have) {
+                copyInterleavedToABL(audio->outB, have, data, offset);
+                offset += have; frames -= have;
+                audio->audibleTrack = plan->incomingTrack;
+                audio->audibleFrame += have;
+                continue;
+            }
+            // Fractional tail shorter than one renderable frame: it is below a sample of timing
+            // significance. The decoder is already positioned immediately after this local prefix.
+            deckReset(&audio->deckB);
             atomic_store_explicit(&audio->bufferedMixCompleted, true, memory_order_release);
-            return pullDirect(audio, plan, offset, frames, data, time);
+            if (frames) return pullDirect(audio, plan, offset, frames, data, time);
         }
+        return noErr;
     }
 
     if (audio->v2Mixing) {
         OSStatus incomingStatus = ensureIncoming(audio, plan, frames, time);
         if (incomingStatus != noErr) return incomingStatus;
-        uint32_t aFrames = deckRender(&audio->deckA, plan->deckARate, audio->outA, frames);
-        uint32_t bFrames = deckRender(&audio->deckB, plan->deckBRate, audio->outB, frames);
-        uint32_t mixed = MIN(aFrames, bFrames);
+        uint32_t possibleA = deckOutputCapacity(&audio->deckA, plan->deckARate);
+        uint32_t possibleB = deckOutputCapacity(&audio->deckB, plan->deckBRate);
+        uint32_t mixed = MIN(frames, MIN(possibleA, possibleB));
         if (!mixed) {
             atomic_fetch_add_explicit(&audio->bufferedUnderruns, 1, memory_order_relaxed);
             audio->v2Mixing = false;
             audio->v2AfterMix = true;
             return processV2Chunk(audio, plan, frames, data, offset, time);
         }
+        // Render exactly the amount both decks can supply so one deck can never be consumed
+        // further than the audio that was actually mixed.
+        uint32_t aFrames = deckRender(&audio->deckA, plan->deckARate, audio->outA, mixed);
+        uint32_t bFrames = deckRender(&audio->deckB, plan->deckBRate, audio->outB, mixed);
+        mixed = MIN(aFrames, bFrames);
 
         float *left = data->mBuffers[0].mData, *right = data->mBuffers[1].mData;
         for (uint32_t i = 0; i < mixed; i++) {
