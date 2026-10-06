@@ -185,6 +185,16 @@ static void workerStatus(void *context, int32_t status) {
         _cooling = overheated();
         [self publish:SGSingFailed explanation:reason]; return;
     }
+    if (!SGAudioPipelineAvailable()) {
+        const char *raw = SGAudioPipelineFailureReason();
+        NSString *detail = raw ? [NSString stringWithUTF8String:raw] : @"audio pipeline unavailable";
+        NSString *spotify = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"this Spotify version";
+        SGLog(@"Sing unavailable: %@", detail);
+        [self publish:SGSingFailed explanation:[NSString stringWithFormat:
+            @"Sing cannot attach to Spotify %@'s audio output (%@). This is an audio-hook compatibility issue, not an audio-quality or lossless setting.",
+            spotify, detail]];
+        return;
+    }
     SPTPlayerState *state = SGPlayerState();
     // Loading/pausing the player is not a request to turn Sing off. Model preparation is
     // independent of the render callback and can complete before the user presses Play.
