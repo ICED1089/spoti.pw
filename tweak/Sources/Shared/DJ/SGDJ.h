@@ -26,6 +26,8 @@ NSString *SGDJPlayerStatusText(void);
 // Human-readable live details for Mod Settings and diagnostics.
 NSString *SGDJCurrentMixSummary(void);
 NSString *SGDJAnalysisSummary(void);
+// Live read-only model used by the DJ monitor UI. Values are immutable Foundation objects.
+NSDictionary<NSString *, id> *SGDJMonitorSnapshot(void);
 
 // Re-read the stored switch/options and start or stop the real engine immediately.
 void SGDJRefreshConfiguration(void);
