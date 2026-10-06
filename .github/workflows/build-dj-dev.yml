@@ -1,0 +1,239 @@
+name: Build DJ dev Spotify
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct URL to a decrypted Spotify IPA"
+        required: true
+        type: string
+      upload_method:
+        description: "Where to put the result"
+        required: true
+        default: artifacts
+        type: choice
+        options:
+          - artifacts
+          - filebin
+          - both
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  EEVEE_VERSION: "7.0.0"
+  EEVEE_DEB_SHA256: "513a50b197aa558c34b02b87bff9f46e6cad3b2e462ee8622fc72fd939e83a9b"
+  SKIP_ALT_ICONS: "1"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout DJ dev source
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository }}
+          ref: dev/dj-v1
+          path: spoti
+          fetch-depth: 1
+
+      - name: Checkout Eevee shim source
+        uses: actions/checkout@v4
+        with:
+          repository: SideloadLabs/EeveeSpotifyReincarnated
+          ref: v7.0.0
+          path: eevee
+          fetch-depth: 1
+          submodules: recursive
+
+      - uses: levibostian/action-hide-sensitive-inputs@v1
+        with:
+          exclude_inputs: upload_method
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.1.1"
+
+      - name: Setup Theos
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          path: theos
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build tools
+        run: |
+          brew install make dpkg ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+          python3 -m pip install --upgrade --break-system-packages \
+            git+https://github.com/asdfzxcvbn/pyzule-rw.git
+
+          ARCH=$(uname -m)
+          [ "$ARCH" = "x86_64" ] && SUFFIX=macos-amd64 || SUFFIX=macos-arm64
+          sudo curl -fsSL \
+            "https://github.com/asdfzxcvbn/ipapatch/releases/latest/download/ipapatch.${SUFFIX}" \
+            -o /usr/local/bin/ipapatch
+          sudo chmod +x /usr/local/bin/ipapatch
+
+      - name: Download Spotify IPA
+        id: spotify
+        env:
+          IPA_URL: ${{ inputs.ipa_url }}
+        run: |
+          mkdir -p spoti/ipa
+          curl -fsSL --retry 3 "$IPA_URL" -o spoti/ipa/spotify.ipa
+
+          case "$(file --mime-type -b spoti/ipa/spotify.ipa)" in
+            application/zip|application/x-ios-app) ;;
+            *) echo "::error::Downloaded file is not an IPA"; exit 1 ;;
+          esac
+
+          VERSION=$(unzip -p spoti/ipa/spotify.ipa 'Payload/*.app/Info.plist' 2>/dev/null \
+            | plutil -extract CFBundleShortVersionString raw - 2>/dev/null || true)
+          [ -n "$VERSION" ] || VERSION="unknown"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "SPOTIFY_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Detected Spotify $VERSION"
+
+      - name: Restore Spotify flag table
+        id: flags-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: spoti/tweak/Sources/Shared/Flags/SGFlagList.m
+          key: v023-dj-dev-flags-${{ steps.spotify.outputs.version }}-${{ hashFiles('spoti/scripts/extract-flags.py') }}
+
+      - name: Build spoti.pw DJ dev
+        working-directory: spoti
+        run: |
+          make release
+          IPA=$(find out -maxdepth 1 -type f -name '*.ipa' | head -1)
+          [ -n "$IPA" ] || { echo "::error::spoti.pw did not produce an IPA"; exit 1; }
+
+          echo "SPOTI_IPA=$GITHUB_WORKSPACE/spoti/$IPA" >> "$GITHUB_ENV"
+          echo "SPOTI_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Save Spotify flag table
+        if: ${{ steps.flags-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: spoti/tweak/Sources/Shared/Flags/SGFlagList.m
+          key: v023-dj-dev-flags-${{ steps.spotify.outputs.version }}-${{ hashFiles('spoti/scripts/extract-flags.py') }}
+
+      - name: Download official Eevee release package
+        run: |
+          mkdir -p eevee-release
+          DEB="$GITHUB_WORKSPACE/eevee-release/com.eevee.spotify_${EEVEE_VERSION}_iphoneos-arm64.deb"
+
+          curl -fsSL --retry 3 \
+            "https://github.com/SideloadLabs/EeveeSpotifyReincarnated/releases/download/v${EEVEE_VERSION}/com.eevee.spotify_${EEVEE_VERSION}_iphoneos-arm64.deb" \
+            -o "$DEB"
+
+          ACTUAL=$(shasum -a 256 "$DEB" | awk '{print $1}')
+          if [ "$ACTUAL" != "$EEVEE_DEB_SHA256" ]; then
+            echo "::error::Eevee release checksum mismatch"
+            exit 1
+          fi
+
+          echo "EEVEE_DEB=$DEB" >> "$GITHUB_ENV"
+          echo "Using verified official Eevee v$EEVEE_VERSION release package"
+
+      - name: Build Eevee sideload shim
+        working-directory: eevee
+        run: |
+          chmod +x Tools/build-zxpi.sh
+          Tools/build-zxpi.sh
+          test -f packages/zxPluginsInject.dylib
+          echo "ZXPI_DYLIB=$GITHUB_WORKSPACE/eevee/packages/zxPluginsInject.dylib" >> "$GITHUB_ENV"
+
+      - name: Inject Eevee into DJ dev v0.23
+        run: |
+          EXTRACT="$RUNNER_TEMP/eevee-deb"
+          rm -rf "$EXTRACT"
+          mkdir -p "$EXTRACT"
+          dpkg-deb -R "$EEVEE_DEB" "$EXTRACT"
+
+          DYLIB=$(find "$EXTRACT" -name 'EeveeSpotify.dylib' | head -1)
+          BUNDLE=$(find "$EXTRACT" -type d -name 'EeveeSpotify.bundle' | head -1)
+          FRAMEWORK=$(find "$EXTRACT" -type d -name 'EeveeSwiftProtobuf.framework' | head -1)
+
+          [ -n "$DYLIB" ] || {
+            echo "::error::EeveeSpotify.dylib missing from official package"
+            exit 1
+          }
+
+          INJECT=("$DYLIB")
+          [ -n "$FRAMEWORK" ] && INJECT+=("$FRAMEWORK")
+          [ -n "$BUNDLE" ] && INJECT+=("$BUNDLE")
+
+          mkdir -p output
+          OUT="$GITHUB_WORKSPACE/output/Spotify-${SPOTIFY_VERSION}-DJ-V1-Dev-Eevee-${EEVEE_VERSION}.ipa"
+
+          cyan -i "$SPOTI_IPA" -o "$OUT" \
+            -f "${INJECT[@]}" -c 9 -m 15.0 -s --overwrite
+
+          echo "FINAL_IPA=$OUT" >> "$GITHUB_ENV"
+
+      - name: Inject Eevee sideload shim
+        run: |
+          ipapatch --input "$FINAL_IPA" --inplace --noconfirm \
+            --dylib "$ZXPI_DYLIB"
+
+      - name: Verify final IPA
+        run: |
+          test -f "$FINAL_IPA"
+          echo "Final IPA:"
+          ls -lh "$FINAL_IPA"
+
+          unzip -l "$FINAL_IPA" | grep -q 'EeveeSpotify.dylib' || {
+            echo "::error::EeveeSpotify.dylib missing from final IPA"; exit 1;
+          }
+
+          unzip -l "$FINAL_IPA" | grep -q 'zxPluginsInject.dylib' || {
+            echo "::error::Eevee sideload shim missing from final IPA"; exit 1;
+          }
+
+          if unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassLiveActivity.appex'; then
+            echo "Live Activity extension: present"
+          else
+            echo "::warning::spoti.pw Live Activity extension not found"
+          fi
+
+      - name: Build summary
+        run: |
+          {
+            echo "## DJ V1 development Spotify build"
+            echo ""
+            echo "- Source: `dev/dj-v1`"
+            echo "- Source commit: `$SPOTI_COMMIT`"
+            echo "- Spotify: `$SPOTIFY_VERSION`"
+            echo "- Eevee: `$EEVEE_VERSION` (official prebuilt release)"
+            echo "- Flag cache hit: `${{ steps.flags-cache.outputs.cache-hit }}`"
+            echo "- Alternate icons: `skipped in CI`"
+            echo "- Output: `$(basename "$FINAL_IPA")`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA artifact
+        if: ${{ inputs.upload_method == 'artifacts' || inputs.upload_method == 'both' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DJ-V1-Dev-Spotify-${{ github.run_id }}
+          path: ${{ env.FINAL_IPA }}
+          if-no-files-found: error
+
+      - name: Upload to filebin.net
+        if: ${{ inputs.upload_method == 'filebin' || inputs.upload_method == 'both' }}
+        run: |
+          BIN="dj-v1-dev-spotify-${{ github.run_id }}-${{ github.run_attempt }}"
+          NAME=$(basename "$FINAL_IPA")
+          curl -fsS -X POST \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$FINAL_IPA" \
+            "https://filebin.net/$BIN/$NAME" >/dev/null
+
+          {
+            echo ""
+            echo "### filebin.net"
+            echo "- https://filebin.net/$BIN/$NAME"
+          } >> "$GITHUB_STEP_SUMMARY"
