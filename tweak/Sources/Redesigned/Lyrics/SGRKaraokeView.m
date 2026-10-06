@@ -1115,7 +1115,8 @@ typedef struct {
     _credit.hidden = YES;
     _credit.numberOfLines = 2;
     _crediting = SGFlag(SGKeyLyricsCredit, NO);
-    _asksCredit = _crediting || SGLyricsActive();
+    // Personal fork: "Show source" is authoritative. Provider-required credits stay hidden when off.
+    _asksCredit = _crediting;
     _sweepsEstimates = SGFlag(SGKeyLyricsSimulateWords, NO);
     [self addSubview:_credit];
     [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapped:)]];
@@ -1664,7 +1665,7 @@ typedef struct {
 
 - (void)creditTo:(SGLyricsCredit *)credit {
     _credited = credit;
-    NSString *text = credit.text.length && (_crediting || credit.required) ? [NSString stringWithFormat:@"Lyrics from %@", credit.text] : nil;
+    NSString *text = credit.text.length && _crediting ? [NSString stringWithFormat:@"Lyrics from %@", credit.text] : nil;
     if (text == _credit.text || [text isEqualToString:_credit.text]) return;
     _credit.text = text;
     _credit.hidden = !_showing || !text.length;
