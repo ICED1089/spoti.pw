@@ -34,7 +34,7 @@ static const NSTimeInterval kProgressInterval = 0.25;      // between two progre
 // Main thread. A file is done once it is checked and in the staging folder under its own name, and
 // checking while it waits for its hash; bytes are what arrived of one still coming, or a stopped
 // download kept for its resume. The epoch goes up on removal, so work begun before it is let go.
-static BOOL sg_loaded, sg_installed, sg_want, sg_metered;
+static BOOL sg_loaded, sg_installed, sg_bundled, sg_want, sg_metered;
 static NSString *sg_failure;
 static BOOL sg_done[kFileCount], sg_checking[kFileCount], sg_restarted[kFileCount], sg_fromResume[kFileCount];
 static int64_t sg_bytes[kFileCount];
@@ -60,6 +60,10 @@ static NSURL *singFolder(void) {
     return folder;
 }
 static NSURL *installedModel(void) { return [singFolder() URLByAppendingPathComponent:@"separator.mlmodelc" isDirectory:YES]; }
+static NSURL *bundledModel(void) {
+    NSString *bundle = [NSBundle.mainBundle pathForResource:@"SpotifyGlassSing" ofType:@"bundle"];
+    return bundle.length ? [[NSURL fileURLWithPath:bundle isDirectory:YES] URLByAppendingPathComponent:@"separator.mlmodelc" isDirectory:YES] : nil;
+}
 static NSURL *staging(void) { return [singFolder() URLByAppendingPathComponent:@"Download" isDirectory:YES]; }
 static NSURL *stagedModel(void) { return [staging() URLByAppendingPathComponent:@"separator.mlmodelc" isDirectory:YES]; }
 static NSURL *stagedFile(int i) { return [stagedModel() URLByAppendingPathComponent:pathOf(i)]; }
@@ -118,6 +122,23 @@ static void load(void) {
     for (int i = 0; i < kFileCount; i++)
         sg_installed &= sizeAt([installedModel() URLByAppendingPathComponent:pathOf(i)]) == kFiles[i].size;
     if (sg_installed) return;
+
+    // A personal IPA can carry the same pinned model itself. The build verifies every payload hash before
+    // injection; the signed app bundle then protects it from being changed independently of the app.
+    NSURL *builtIn = bundledModel();
+    if (builtIn) {
+        BOOL complete = YES;
+        for (int i = 0; i < kFileCount; i++)
+            complete &= sizeAt([builtIn URLByAppendingPathComponent:pathOf(i)]) == kFiles[i].size;
+        if (complete) {
+            sg_installed = YES;
+            sg_bundled = YES;
+            SGLog(@"Sing voice model: using the verified model built into this personal IPA");
+            return;
+        }
+        SGLog(@"Sing voice model: built-in model is incomplete, ignoring it");
+    }
+
     for (int i = 0; i < kFileCount; i++) {
         sg_done[i] = sizeAt(stagedFile(i)) == kFiles[i].size;
         sg_bytes[i] = sg_done[i] ? 0 : [[NSDictionary dictionaryWithContentsOfURL:resumeFile(i)][@"bytes"] longLongValue];
@@ -382,7 +403,13 @@ NSString *SGSingModelFailure(void) { return sg_failure; }
 
 NSString *SGSingModelPath(void) {
     load();
-    return sg_installed ? installedModel().path : nil;
+    if (!sg_installed) return nil;
+    return (sg_bundled ? bundledModel() : installedModel()).path;
+}
+
+BOOL SGSingModelBundled(void) {
+    load();
+    return sg_bundled;
 }
 
 NSString *SGSingModelBytesText(int64_t bytes) {
@@ -391,6 +418,8 @@ NSString *SGSingModelBytesText(int64_t bytes) {
 }
 
 NSString *SGSingModelSpaceProblem(void) {
+    load();
+    if (sg_bundled) return nil;
     int64_t needed = SGSingModelSize() - SGSingModelReceived() + kHeadroom;
     // The volume is asked through the nearest folder that already exists.
     NSURL *folder = singFolder();
@@ -420,6 +449,7 @@ void SGSingModelCheckNetwork(void (^done)(SGSingModelNetwork network)) {
 
 void SGSingModelDownload(BOOL metered) {
     load();
+    if (sg_bundled) return;
     if (sg_installed || sg_want) return;
     NSError *error = nil;
     if (!makeFolders(&error)) {
@@ -449,6 +479,10 @@ void SGSingModelCancel(void) {
 
 void SGSingModelRemove(void) {
     load();
+    if (sg_bundled) {
+        SGLog(@"Sing voice model: built-in model cannot be removed separately from the app");
+        return;
+    }
     SGLog(@"Sing voice model removed");
     sg_epoch++;
     stopTasks(NO);
