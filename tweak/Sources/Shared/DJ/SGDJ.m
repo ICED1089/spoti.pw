@@ -6,6 +6,7 @@
 #import "Shared/Sing/SGSingController.h"
 #import "SGDJ.h"
 #import "SGDJAudio.h"
+#import "SGBeatItAnalyzer.h"
 #import <AVFoundation/AVFoundation.h>
 #import <stdatomic.h>
 #import <math.h>
@@ -18,7 +19,7 @@ NSString *const SGKeyDJIntensity = @"spotifyglass.dj.intensity";
 NSNotificationName const SGDJStateDidChangeNotification = @"spotifyglass.dj.state";
 
 static NSString *const kAnalysisCacheKey = @"spotifyglass.dj.analysis.v1";
-static const NSInteger kAnalysisVersion = 1;
+static const NSInteger kAnalysisVersion = 2;
 static const NSTimeInterval kTick = 0.10;
 static const NSTimeInterval kCacheEvery = 5.0;
 enum {
@@ -72,11 +73,7 @@ static double clampDouble(double value, double low, double high) {
 
     double _blockSquares;
     uint32_t _blockFrames;
-    uint64_t _blockSourceFrame;
-    float _movingEnergy, _previousRMS;
-    float _flux[kEnvelopeCapacity];
     float _energy[kEnvelopeCapacity];
-    uint64_t _envFrame[kEnvelopeCapacity];
     uint64_t _envTotal;
 
     double _introSum;
@@ -87,6 +84,12 @@ static double clampDouble(double value, double low, double high) {
     double _keyCoeff[kKeyNotes];
     double _chroma[12];
     uint64_t _keyWindows;
+
+    NSMutableData *_beatPCM;
+    uint64_t _beatPCMStartFrame;
+    SGBeatItAnalysis _beat;
+    BOOL _beatReady;
+    unsigned _beatAttempts;
 }
 - (instancetype)initWithTrack:(uint64_t)track;
 - (void)addStamp:(SGAudioStamp)stamp pcm:(const float *)pcm;
@@ -98,24 +101,23 @@ static double clampDouble(double value, double low, double high) {
 - (instancetype)initWithTrack:(uint64_t)track {
     if (!(self = [super init])) return nil;
     _track = track;
+    _beatPCM = [NSMutableData dataWithCapacity:(NSUInteger)SGDJAudioSampleRate * 30 * sizeof(float)];
     const double rate = (double)SGDJAudioSampleRate / kKeyDownsample;
     for (int n = 0; n < kKeyNotes; n++) {
-        int midi = 36 + n; // C2 through B4
+        int midi = 36 + n;
         double frequency = 440.0 * pow(2.0, (midi - 69) / 12.0);
         _keyCoeff[n] = 2.0 * cos(2.0 * M_PI * frequency / rate);
     }
     return self;
 }
 
-- (void)resetRhythmAt:(uint64_t)frame {
-    _blockSquares = 0;
-    _blockFrames = 0;
-    _blockSourceFrame = frame;
-    _movingEnergy = 0;
-    _previousRMS = 0;
-    _envTotal = 0;
-    _keyCount = 0;
-    _downsamplePhase = 0;
+- (void)resetBeatAt:(uint64_t)frame {
+    _expectedFrame = frame;
+    _beatPCM.length = 0;
+    _beatPCMStartFrame = frame;
+    _beat = (SGBeatItAnalysis){0};
+    _beatReady = NO;
+    _beatAttempts = 0;
 }
 
 - (void)analyzeKeyWindow {
@@ -126,7 +128,6 @@ static double clampDouble(double value, double low, double high) {
     for (int n = 0; n < kKeyNotes; n++) {
         double s1 = 0, s2 = 0, coefficient = _keyCoeff[n];
         for (int i = 0; i < kKeyWindow; i++) {
-            // A simple Hann window keeps neighbouring notes from dominating the chroma.
             double w = 0.5 - 0.5 * cos(2.0 * M_PI * i / (kKeyWindow - 1));
             double sample = (_keySamples[i] - mean) * w;
             double s0 = sample + coefficient * s1 - s2;
@@ -140,13 +141,44 @@ static double clampDouble(double value, double low, double high) {
     _keyCount = 0;
 }
 
+- (void)tryBeatIt {
+    if (_beatReady) return;
+    double seconds = _beatPCM.length / (double)(sizeof(float) * SGDJAudioSampleRate);
+    double threshold = _beatAttempts == 0 ? 20.0 : 29.0;
+    if (_beatAttempts >= 2 || seconds < threshold) return;
+
+    SGBeatItAnalysis analysis = {0};
+    _beatAttempts++;
+    CFTimeInterval started = CACurrentMediaTime();
+    BOOL ok = SGBeatItAnalyze(_beatPCM.bytes,
+                              (uint32_t)(_beatPCM.length / sizeof(float)),
+                              SGDJAudioSampleRate,
+                              &analysis);
+    double elapsed = CACurrentMediaTime() - started;
+    if (ok) {
+        _beat = analysis;
+        _beatReady = YES;
+        SGLog(@"dj BeatIt: %.1f BPM confidence %.2f, %u beats, %u downbeats, %.2f s inference",
+              analysis.bpm, analysis.confidence, analysis.beatCount, analysis.downbeatCount, elapsed);
+    } else {
+        SGLog(@"dj BeatIt: analysis attempt %u had no reliable grid after %.0f s PCM (%.2f s inference)",
+              _beatAttempts, seconds, elapsed);
+    }
+}
+
 - (void)addStamp:(SGAudioStamp)stamp pcm:(const float *)pcm {
     if (!pcm || stamp.track != _track || !stamp.frames) return;
-    if (_expectedFrame && stamp.sourceFrame != _expectedFrame) [self resetRhythmAt:stamp.sourceFrame];
-    if (!_expectedFrame && !_blockFrames) _blockSourceFrame = stamp.sourceFrame;
+    if (_expectedFrame && stamp.sourceFrame != _expectedFrame) [self resetBeatAt:stamp.sourceFrame];
+    if (!_expectedFrame) {
+        _expectedFrame = stamp.sourceFrame;
+        _beatPCMStartFrame = stamp.sourceFrame;
+    }
 
-    for (uint32_t i = 0; i < stamp.frames; i++) {
+    float monoChunk[SGDJAudioMaximumFrames];
+    uint32_t monoCount = MIN(stamp.frames, (uint32_t)SGDJAudioMaximumFrames);
+    for (uint32_t i = 0; i < monoCount; i++) {
         float mono = 0.5f * (pcm[i * 2] + pcm[i * 2 + 1]);
+        monoChunk[i] = mono;
         _blockSquares += (double)mono * mono;
         _blockFrames++;
         _totalFrames++;
@@ -163,40 +195,23 @@ static double clampDouble(double value, double low, double high) {
 
         if (_blockFrames == kEnvelopeHop) {
             float rms = (float)sqrt(_blockSquares / _blockFrames + 1e-12);
-            if (_rmsCount == 0) _movingEnergy = rms;
-            else _movingEnergy = _movingEnergy * 0.985f + rms * 0.015f;
-            float rise = fmaxf(0, rms - _previousRMS);
-            float above = fmaxf(0, rms - _movingEnergy);
-            float onset = rise + above * 1.6f;
-
-            uint64_t index = _envTotal % kEnvelopeCapacity;
-            _flux[index] = onset;
-            _energy[index] = rms;
-            _envFrame[index] = _blockSourceFrame;
+            _energy[_envTotal % kEnvelopeCapacity] = rms;
             _envTotal++;
-
             _sumRMS += rms;
             _rmsCount++;
-            _previousRMS = rms;
             _blockSquares = 0;
             _blockFrames = 0;
-            _blockSourceFrame = stamp.sourceFrame + i + 1;
         }
     }
-    _expectedFrame = stamp.sourceFrame + stamp.frames;
-}
 
-- (float)fluxAtLogical:(int)logical count:(int)count {
-    uint64_t first = _envTotal > (uint64_t)count ? _envTotal - count : 0;
-    return _flux[(first + logical) % kEnvelopeCapacity];
-}
-- (float)energyAtLogical:(int)logical count:(int)count {
-    uint64_t first = _envTotal > (uint64_t)count ? _envTotal - count : 0;
-    return _energy[(first + logical) % kEnvelopeCapacity];
-}
-- (uint64_t)frameAtLogical:(int)logical count:(int)count {
-    uint64_t first = _envTotal > (uint64_t)count ? _envTotal - count : 0;
-    return _envFrame[(first + logical) % kEnvelopeCapacity];
+    const NSUInteger maxBytes = (NSUInteger)SGDJAudioSampleRate * 30 * sizeof(float);
+    if (_beatPCM.length < maxBytes) {
+        NSUInteger room = maxBytes - _beatPCM.length;
+        NSUInteger bytes = MIN(room, (NSUInteger)monoCount * sizeof(float));
+        [_beatPCM appendBytes:monoChunk length:bytes];
+    }
+    _expectedFrame = stamp.sourceFrame + stamp.frames;
+    [self tryBeatIt];
 }
 
 - (SGDJAnalysisSnapshot)snapshot {
@@ -210,68 +225,21 @@ static double clampDouble(double value, double low, double high) {
     int tail = MIN(count, 1500);
     if (tail) {
         double sum = 0;
-        for (int i = count - tail; i < count; i++) sum += [self energyAtLogical:i count:count];
+        uint64_t first = _envTotal > (uint64_t)count ? _envTotal - count : 0;
+        for (int i = count - tail; i < count; i++) sum += _energy[(first + i) % kEnvelopeCapacity];
         result.outroEnergy = sum / tail;
     }
 
-    if (count >= 1000) {
-        // Normalized autocorrelation over 60–200 BPM. A minute is enough to be stable while
-        // keeping a snapshot cheap; the ring itself retains 90 seconds for phase/outro work.
-        int use = MIN(count, 6000);
-        int base = count - use;
-        double best = 0, second = 0;
-        int bestLag = 0;
-        for (int lag = 30; lag <= 100; lag++) {
-            double ab = 0, aa = 0, bb = 0;
-            for (int i = base + lag; i < count; i++) {
-                double a = [self fluxAtLogical:i count:count];
-                double b = [self fluxAtLogical:i - lag count:count];
-                ab += a * b; aa += a * a; bb += b * b;
-            }
-            double score = ab / (sqrt(aa * bb) + 1e-12);
-            if (score > best) { second = best; best = score; bestLag = lag; }
-            else if (score > second) second = score;
-        }
-
-        if (bestLag) {
-            double bpm = 6000.0 / bestLag;
-            while (bpm < 80) bpm *= 2;
-            while (bpm > 190) bpm /= 2;
-            result.bpm = bpm;
-            result.beatPeriod = 60.0 / bpm;
-            result.bpmConfidence = clampDouble((best - 0.06) / 0.34, 0, 1);
-            if (best - second < 0.015) result.bpmConfidence *= 0.72;
-
-            int phaseLag = (int)llround(result.beatPeriod * 100.0);
-            phaseLag = MAX(1, MIN(phaseLag, 100));
-            double phaseBest = -1;
-            int phase = 0;
-            for (int offset = 0; offset < phaseLag; offset++) {
-                double score = 0;
-                for (int i = base + offset; i < count; i += phaseLag)
-                    score += [self fluxAtLogical:i count:count];
-                if (score > phaseBest) { phaseBest = score; phase = offset; }
-            }
-
-            int phaseIndex = base + phase;
-            if (phaseIndex < count) {
-                double absolute = [self frameAtLogical:phaseIndex count:count] / (double)SGDJAudioSampleRate;
-                result.beatPhase = fmod(absolute, result.beatPeriod);
-                if (result.beatPhase < 0) result.beatPhase += result.beatPeriod;
-
-                int accent = 0;
-                double accentBest = -1;
-                for (int beat = 0; beat < 4; beat++) {
-                    double score = 0;
-                    for (int i = phaseIndex + beat * phaseLag; i < count; i += phaseLag * 4)
-                        score += [self energyAtLogical:i count:count];
-                    if (score > accentBest) { accentBest = score; accent = beat; }
-                }
-                double bar = result.beatPeriod * 4;
-                result.barPhase = fmod(absolute + accent * result.beatPeriod, bar);
-                if (result.barPhase < 0) result.barPhase += bar;
-            }
-        }
+    if (_beatReady) {
+        result.bpm = _beat.bpm;
+        result.bpmConfidence = _beat.confidence;
+        result.beatPeriod = _beat.beatPeriod;
+        double offset = _beatPCMStartFrame / (double)SGDJAudioSampleRate;
+        result.beatPhase = fmod(_beat.beatPhase + offset, _beat.beatPeriod);
+        if (result.beatPhase < 0) result.beatPhase += _beat.beatPeriod;
+        double bar = _beat.beatPeriod * 4.0;
+        result.barPhase = fmod(_beat.barPhase + offset, bar);
+        if (result.barPhase < 0) result.barPhase += bar;
     }
 
     if (_keyWindows >= 4) {
@@ -471,7 +439,7 @@ static void publishState(SGDJState state) {
 }
 
 - (void)storeSnapshot:(SGDJAnalysisSnapshot)value uri:(NSString *)uri duration:(double)duration {
-    if (!uri.length || value.analyzedSeconds < 8) return;
+    if (!uri.length || value.analyzedSeconds < 8 || value.bpmConfidence < 0.30) return;
     _cache[uri] = @{
         @"v": @(kAnalysisVersion),
         @"bpm": @(value.bpm), @"bpmC": @(value.bpmConfidence),
@@ -832,10 +800,10 @@ static void publishState(SGDJState state) {
 - (NSString *)analysisSummary {
     if (!_trackHash) return @"No song";
     SGDJAnalysisSnapshot value = [self bestSnapshotForURI:_track hash:_trackHash];
-    if (value.analyzedSeconds < 8) return [NSString stringWithFormat:@"Analyzing · %.0f s", value.analyzedSeconds];
-    NSString *bpm = value.bpmConfidence >= 0.15 ? [NSString stringWithFormat:@"%.0f BPM", value.bpm] : @"BPM uncertain";
+    if (value.bpmConfidence < 0.30) return [NSString stringWithFormat:@"BeatIt analyzing · %.0f s", value.analyzedSeconds];
+    NSString *bpm = [NSString stringWithFormat:@"%.0f BPM", value.bpm];
     NSString *key = value.keyConfidence >= 0.15 ? camelotText(value) : @"key uncertain";
-    return [NSString stringWithFormat:@"%@ · %@ · %.0f s", bpm, key, value.analyzedSeconds];
+    return [NSString stringWithFormat:@"BeatIt · %@ · %@ · %.0f s", bpm, key, value.analyzedSeconds];
 }
 @end
 
