@@ -1,6 +1,6 @@
 # DJ Mix Roadmap — v0.23 Personal Fork
 
-> Research/planning document only. No DJ Mix implementation has been started.
+> Living implementation roadmap. DJ V1 and the buffered V2 path are now implemented on the personal `main` branch; phone validation/tuning is ongoing.
 >
 > Research snapshot: 2026-10-06
 >
@@ -125,19 +125,19 @@ Sing already:
 
 This is highly relevant to V2.
 
-### Critical limitation
+### Current compatibility status
 
-`SGAudioSourceQueueInitialize()` is currently verified against the **Spotify 9.1.78 arm64 binary UUID and exact private code signatures/offsets**.
+The source queue is now versioned and verified by exact Spotify arm64 UUID/signatures for both **9.1.78** and **9.1.88**.
 
-Our current daily build is Spotify **9.1.88**.
+The 9.1.88 adapter is live in `SGAudioSourceQueue.m`; diagnostics from the phone confirm:
 
-Therefore:
+- the Spotify 9.1.88 layout is selected
+- the local audio source processor attaches
+- continuous natural-boundary read-ahead is available
 
-> Do not assume next-track read-ahead works on 9.1.88.
+Unknown Spotify binaries still fail closed instead of guessing offsets.
 
-Before V2 work, the source-queue layout must be rediscovered/reverified for the current Spotify binary and wrapped in a compatibility adapter rather than hardcoded forever.
-
-This is a hard V2 gate.
+**V2 Gate A is therefore passed for Spotify 9.1.88.**
 
 ---
 
@@ -424,9 +424,13 @@ This unlocks:
 - echo/reverb outs while B is already playing
 - more human-DJ-like transitions
 
-## V2 hard feasibility question
+## V2 implementation decision
 
-Can the fork safely obtain **two independently controllable decoded audio streams** from Spotify?
+The first V2 implementation does **not** require a second private Spotify player.
+
+Instead, the verified 9.1.88 decoder queue is consumed slightly ahead only when already-decoded PCM is available. The unpresented tail of A and beginning of B are retained in bounded local buffers, creating two locally controllable decks for the overlap.
+
+A true second Spotify decoder remains a future research option, not a V2 prerequisite.
 
 Current code proves only that:
 
@@ -446,9 +450,9 @@ Do not start V2 DSP until this is proven.
 
 ## V2 research/prototype gates
 
-### Gate A — Spotify 9.1.88 source-queue compatibility
+### Gate A — Spotify 9.1.88 source-queue compatibility — PASSED
 
-Reverify the decoder callback/layout for 9.1.88.
+The decoder callback/layout is verified for 9.1.88 by UUID/signature and fails closed on unknown binaries.
 
 Preferred design:
 
@@ -458,9 +462,9 @@ Preferred design:
 - never guess offsets
 - diagnostics show supported/unsupported
 
-### Gate B — second-track audio availability
+### Gate B — second-track audio availability — BUFFERED PATH IMPLEMENTED
 
-Investigate whether Spotify already:
+The chosen path uses Spotify's verified continuous boundary queue plus bounded local Deck A/Deck B buffers. Continue investigating whether Spotify also exposes:
 
 - decodes B before A finishes
 - keeps a second decoder/player internally
