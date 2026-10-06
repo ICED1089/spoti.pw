@@ -42,7 +42,9 @@ SOURCES_MM := \
 	src/beatit/inference/coreml/inference.mm \
 	src/beatit/inference/coreml/model_utils.mm
 
-OBJECTS := $(patsubst %.cpp,$(OBJ)/%.o,$(SOURCES_CPP)) $(patsubst %.mm,$(OBJ)/%.o,$(SOURCES_MM))
+OBJECTS_CPP := $(patsubst %.cpp,$(OBJ)/cpp/%.o,$(SOURCES_CPP))
+OBJECTS_MM := $(patsubst %.mm,$(OBJ)/mm/%.o,$(SOURCES_MM))
+OBJECTS := $(OBJECTS_CPP) $(OBJECTS_MM)
 
 .PHONY: all clean source
 all: $(LIB) $(BUNDLE)
@@ -56,13 +58,13 @@ $(SRC)/.pinned:
 	@cd $(SRC) && git checkout -q $(UPSTREAM_COMMIT)
 	@touch $@
 
-$(OBJ)/%.o: $(SRC)/%.cpp $(SRC)/.pinned
+$(OBJ)/cpp/%.o: $(SRC)/.pinned
 	@mkdir -p $(dir $@)
-	@$(CXX) $(COMMON) -c $< -o $@
+	@$(CXX) $(COMMON) -c $(SRC)/$*.cpp -o $@
 
-$(OBJ)/%.o: $(SRC)/%.mm $(SRC)/.pinned
+$(OBJ)/mm/%.o: $(SRC)/.pinned
 	@mkdir -p $(dir $@)
-	@$(CXX) $(COMMON) -fobjc-arc -c $< -o $@
+	@$(CXX) $(COMMON) -fobjc-arc -c $(SRC)/$*.mm -o $@
 
 $(LIB): $(OBJECTS)
 	@mkdir -p $(OUT)
