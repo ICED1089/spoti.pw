@@ -79,39 +79,18 @@ static void showFix(void) {
 
 // nil while the signature is sound, which is what keeps the row out of Mod Settings entirely.
 SGModRow *SGSigningWarningRow(void) {
-    if (SGSigningOpensFromLockScreen()) return nil;
-    return SGWarningRow(@"The lock screen cannot open Spotify",
-                        @"Tap for the fix",
-                        ^{ showFix(); });
+    // LiveContainer commonly signs under a different App ID; keep this as diagnostics only.
+    return nil;
 }
 
 // Said once per signature: re-signing under a different App ID is a new mistake and says so again,
 // but a build that is simply left broken does not nag on every launch. The row stays either way.
 void SGCheckSigningOnce(void) {
     if (SGSigningOpensFromLockScreen()) return;
-    NSString *appID = SGSigningAppIdentifier();
-    NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
     SGLog(@"signing: installed as %@ but signed under %@; the now playing card cannot open this build",
-          NSBundle.mainBundle.bundleIdentifier, appID);
-    if ([[store stringForKey:kWarned] isEqualToString:appID]) return;
-    [store setObject:appID forKey:kWarned];
-
-    // The first activation, plus a moment for Spotify's own start-up screens to get out of the way.
-    __block id token = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                                      object:nil
-                                                                       queue:nil
-                                                                  usingBlock:^(NSNotification *note) {
-        [NSNotificationCenter.defaultCenter removeObserver:token];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            // The welcome tour has the screen; it shows the fix when it goes.
-            if (SGOnboardingShowing()) sg_fixPending = YES;
-            else showFix();
-        });
-    }];
+          NSBundle.mainBundle.bundleIdentifier, SGSigningAppIdentifier());
 }
 
 void SGShowSigningFixIfPending(void) {
-    if (!sg_fixPending) return;
-    sg_fixPending = NO;
-    showFix();
+    // Personal fork: signing mismatch is logged, not shown as a warning.
 }
