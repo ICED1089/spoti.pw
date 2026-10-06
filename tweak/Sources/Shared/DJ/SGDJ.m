@@ -9,6 +9,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <stdatomic.h>
 #import <math.h>
+#import <float.h>
 
 NSString *const SGKeyDJEnabled = @"spotifyglass.dj.enabled";
 NSString *const SGKeyDJIndicator = @"spotifyglass.dj.playerIndicator";
@@ -20,11 +21,13 @@ static NSString *const kAnalysisCacheKey = @"spotifyglass.dj.analysis.v1";
 static const NSInteger kAnalysisVersion = 1;
 static const NSTimeInterval kTick = 0.10;
 static const NSTimeInterval kCacheEvery = 5.0;
-static const int kEnvelopeCapacity = 9000; // 90 seconds at 100 Hz
-static const int kEnvelopeHop = 441;
-static const int kKeyDownsample = 4;
-static const int kKeyWindow = 4096;
-static const int kKeyNotes = 36;
+enum {
+    kEnvelopeCapacity = 9000, // 90 seconds at 100 Hz
+    kEnvelopeHop = 441,
+    kKeyDownsample = 4,
+    kKeyWindow = 4096,
+    kKeyNotes = 36,
+};
 
 static atomic_int sg_state;
 
