@@ -88,21 +88,6 @@ echo "    $TWEAK_DEB"
 FILES=("$TWEAK_DEB")
 [ "$WITH_FLEX" = 1 ] && FILES+=("$FLEX_DEB")
 
-# The old external Sing model host now rejects the model with HTTP 401. Personal CI therefore builds the
-# exact pinned MIT model from its recorded provenance and carries it as an app resource. This avoids a
-# network dependency on first use without changing Sing's inference engine. Other builds keep the normal
-# lightweight IPA unless BUNDLE_SING_MODEL=1 is explicitly requested.
-SING_BUNDLE="${SING_MODEL_BUNDLE:-}"
-if [ -z "$SING_BUNDLE" ] && { [ "${BUNDLE_SING_MODEL:-0}" = "1" ] || [ "${GITHUB_REPOSITORY:-}" = "ICED1089/spoti.pw" ]; }; then
-  SING_BUNDLE="$ROOT/out/SpotifyGlassSing.bundle"
-  bash "$ROOT/scripts/build-sing-bundle.sh" "$SING_BUNDLE"
-fi
-if [ -n "$SING_BUNDLE" ]; then
-  [ -d "$SING_BUNDLE/separator.mlmodelc" ] || { echo "invalid Sing model bundle: $SING_BUNDLE" >&2; exit 1; }
-  echo "==> including the verified Sing voice model"
-  FILES+=("$SING_BUNDLE")
-fi
-
 # The Live Activity (Shared/LiveActivity) draws in a widget extension of its own.
 if xcrun --sdk iphoneos --find swiftc >/dev/null 2>&1; then
   EXT_DIR="$ROOT/out/extension"
