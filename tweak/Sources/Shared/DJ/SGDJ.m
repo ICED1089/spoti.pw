@@ -94,6 +94,7 @@ static double clampDouble(double value, double low, double high) {
 - (instancetype)initWithTrack:(uint64_t)track;
 - (void)addStamp:(SGAudioStamp)stamp pcm:(const float *)pcm;
 - (SGDJAnalysisSnapshot)snapshot;
+- (unsigned)beatAttempts;
 @end
 
 @implementation SGDJAccumulator
@@ -110,6 +111,8 @@ static double clampDouble(double value, double low, double high) {
     }
     return self;
 }
+
+- (unsigned)beatAttempts { return _beatAttempts; }
 
 - (void)resetBeatAt:(uint64_t)frame {
     _expectedFrame = frame;
@@ -318,6 +321,7 @@ static NSString *recipeName(SGDJRecipe recipe) {
 @property (nonatomic) uint64_t trackHash, nextHash;
 @property (nonatomic) BOOL interrupted;
 @property (nonatomic) BOOL planValid;
+@property (nonatomic) BOOL planBuffered;
 @property (nonatomic) uint64_t planTrack, planNext;
 @property (nonatomic) double planStart, planEnd, incomingDuration, tempoRatio;
 @property (nonatomic) SGDJRecipe planRecipe;
@@ -488,13 +492,14 @@ static void publishState(SGDJState state) {
     [self restoreTempo];
     SGDJAudioClearPlan(_audio);
     _planValid = NO;
+    _planBuffered = NO;
     _planTrack = _planNext = 0;
     _planReason = nil;
     if (SGDJEnabled()) publishState(SGDJStateIdle);
 }
 
 - (void)beginTempoIfNeeded {
-    if (_tempoAdjusted || !_planValid || fabs(_tempoRatio - 1) < 0.005 || !SGPlayerSpeedAllowed()) return;
+    if (_planBuffered || _tempoAdjusted || !_planValid || fabs(_tempoRatio - 1) < 0.005 || !SGPlayerSpeedAllowed()) return;
     _savedSpeed = SGPlayerSpeed();
     _savedFollows = SGPlayerPitchFollowsSpeed();
     if (_savedFollows) SGSetPlayerPitchFollowsSpeed(NO);
@@ -524,79 +529,122 @@ static void publishState(SGDJState state) {
     if (style == 1) recipe = SGDJRecipeSmooth;
     else if (style == 2) recipe = SGDJRecipeClub;
     else if (style == 3) recipe = SGDJRecipeQuick;
-    else if (a.bpmConfidence < 0.18) {
-        recipe = SGDJRecipeCleanCut;
-        reason = @"low BPM confidence";
-    } else if (!bKnown || b.bpmConfidence < 0.18) {
+    else if (a.bpmConfidence < 0.30) {
         recipe = SGDJRecipeQuick;
-        reason = @"next track not cached yet";
-    } else if (bpmDistance > 0.10 || !keysCompatible(a, b)) {
-        recipe = bpmDistance > 0.16 ? SGDJRecipeCleanCut : SGDJRecipeQuick;
-        reason = bpmDistance > 0.10 ? @"large BPM difference" : @"harmonic mismatch";
+        reason = @"outgoing beat grid unavailable; short overlap";
+    } else if (!bKnown || b.bpmConfidence < 0.30) {
+        recipe = SGDJRecipeQuick;
+        reason = @"next track not cached yet; short overlap";
+    } else if (bpmDistance > 0.12 || !keysCompatible(a, b)) {
+        recipe = SGDJRecipeQuick;
+        reason = bpmDistance > 0.12 ? @"large BPM difference; short overlap" : @"harmonic mismatch; short overlap";
     } else if (SGDJIntensity() >= 2 && a.outroEnergy > 0.04 && b.introEnergy > 0.02) {
         recipe = SGDJRecipeClub;
     } else {
         recipe = SGDJRecipeSmooth;
     }
 
-    double bpm = a.bpmConfidence >= 0.15 && a.bpm > 0 ? a.bpm : 120;
+    double bpm = a.bpmConfidence >= 0.30 && a.bpm > 0 ? a.bpm : 120;
     double period = 60.0 / bpm;
-    NSInteger beats = recipe == SGDJRecipeSmooth ? 16 : recipe == SGDJRecipeClub ? 8 : recipe == SGDJRecipeQuick ? 4 : 1;
+    NSInteger beats = recipe == SGDJRecipeSmooth ? 16 : recipe == SGDJRecipeClub ? 8 : 4;
     double desired = beats * period;
-    if (recipe == SGDJRecipeSmooth) desired = clampDouble(desired, 4.0, 12.0);
-    else if (recipe == SGDJRecipeClub) desired = clampDouble(desired, 3.0, 8.0);
-    else if (recipe == SGDJRecipeQuick) desired = clampDouble(desired, 1.4, 3.5);
-    else desired = clampDouble(desired, 0.25, 0.8);
+    if (recipe == SGDJRecipeSmooth) desired = clampDouble(desired, 4.0, 8.0);
+    else if (recipe == SGDJRecipeClub) desired = clampDouble(desired, 3.0, 6.5);
+    else desired = clampDouble(desired, 1.25, 3.0);
+    if (a.bpmConfidence < 0.30 || !bKnown || b.bpmConfidence < 0.30 || bpmDistance > 0.12)
+        desired = MIN(desired, 1.8);
 
     double rawStart = MAX(0, state.duration - desired);
-    double start = rawStart;
-    if (a.bpmConfidence >= 0.22 && a.beatPeriod > 0) {
+    double mixStart = rawStart;
+    if (a.bpmConfidence >= 0.30 && a.beatPeriod > 0) {
         double bar = a.beatPeriod * 4;
         double phase = a.barPhase;
         double aligned = phase + floor((rawStart - phase) / bar) * bar;
         double length = state.duration - aligned;
-        if (aligned >= 0 && length >= desired * 0.65 && length <= desired * 1.65) start = aligned;
+        if (aligned >= 0 && length >= desired * 0.70 && length <= desired * 1.45) mixStart = aligned;
+    }
+    double overlapSeconds = clampDouble(state.duration - mixStart, 0.8, 8.0);
+
+    // If the next song is known, cue B on its first cached downbeat/bar phase. Unknown tracks start
+    // at zero and use a short overlap; they are analyzed and cached while they play.
+    double incomingCueSeconds = 0;
+    if (bKnown && b.bpmConfidence >= 0.30 && b.beatPeriod > 0) {
+        incomingCueSeconds = b.barPhase;
+        double bar = b.beatPeriod * 4;
+        if (bar > 0) incomingCueSeconds = fmod(incomingCueSeconds, bar);
+        incomingCueSeconds = clampDouble(incomingCueSeconds, 0, 3.5);
+        if (incomingCueSeconds < 0.08) incomingCueSeconds = 0;
     }
 
-    double incomingBPM = bKnown && b.bpmConfidence >= 0.15 && bNorm > 0 ? bNorm : bpm;
-    NSInteger incomingBeats = recipe == SGDJRecipeSmooth ? 8 : recipe == SGDJRecipeClub ? 8 : recipe == SGDJRecipeQuick ? 2 : 1;
-    double incoming = incomingBeats * 60.0 / incomingBPM;
-    incoming = clampDouble(incoming, recipe == SGDJRecipeCleanCut ? 0.18 : 0.7, 6.0);
+    // V2 independently nudges the two buffered decks with a very small high-quality-safe varispeed.
+    // Splitting the correction around the geometric-mean tempo halves the pitch/tempo change per deck.
+    float rateA = 1, rateB = 1;
+    if (a.bpmConfidence >= 0.30 && bKnown && b.bpmConfidence >= 0.30 && a.bpm > 0 && bNorm > 0) {
+        double target = sqrt(a.bpm * bNorm);
+        double candidateA = target / a.bpm;
+        double candidateB = target / bNorm;
+        double limit = SGDJIntensity() == 0 ? 0.015 : SGDJIntensity() == 2 ? 0.035 : 0.025;
+        if (fabs(candidateA - 1) <= limit && fabs(candidateB - 1) <= limit) {
+            rateA = (float)candidateA;
+            rateB = (float)candidateB;
+        } else if (!reason) {
+            reason = @"tempo gap outside V2 micro-match range";
+        }
+    }
 
-    double ratio = 1;
-    if (a.bpmConfidence >= 0.25 && bKnown && b.bpmConfidence >= 0.25 && a.bpm > 0 && bNorm > 0) {
+    BOOL buffered = SGDJAudioBoundarySupported(_audio);
+    uint64_t overlapFrames = (uint64_t)llround(overlapSeconds * SGDJAudioSampleRate);
+    uint64_t cueFrames = (uint64_t)llround(incomingCueSeconds * SGDJAudioSampleRate);
+
+    // At most 12 seconds are retained. Starting roughly 2.2x the required lead before the song end
+    // lets the decoder advance no faster than ~2x while audible A remains at normal real-time pace.
+    double leadSeconds = overlapSeconds + incomingCueSeconds;
+    double prefetchStart = MAX(0, state.duration - (leadSeconds * 2.2 + 1.0));
+
+    double incoming = clampDouble(overlapSeconds, 0.8, 8.0);
+    double v1Ratio = 1;
+    if (!buffered && a.bpmConfidence >= 0.30 && bKnown && b.bpmConfidence >= 0.30 &&
+        a.bpm > 0 && bNorm > 0) {
         double wanted = bNorm / a.bpm;
         double limit = SGDJIntensity() == 0 ? 0.03 : SGDJIntensity() == 2 ? 0.07 : 0.05;
-        if (fabs(wanted - 1) <= limit && recipe != SGDJRecipeCleanCut) ratio = wanted;
-        else if (!reason && fabs(wanted - 1) > limit) reason = @"tempo stretch outside quality limit";
+        if (fabs(wanted - 1) <= limit) v1Ratio = wanted;
     }
 
     float strength = SGDJIntensity() == 0 ? 0.72f : SGDJIntensity() == 2 ? 1.18f : 1.0f;
     SGDJMixPlan plan = {
-        .outgoingTrack = _trackHash, .incomingTrack = _nextHash,
-        .outgoingStartFrame = (uint64_t)llround(start * SGDJAudioSampleRate),
+        .outgoingTrack = _trackHash,
+        .incomingTrack = _nextHash,
+        .outgoingStartFrame = (uint64_t)llround(mixStart * SGDJAudioSampleRate),
         .outgoingEndFrame = (uint64_t)llround(state.duration * SGDJAudioSampleRate),
         .incomingFrames = (uint64_t)llround(incoming * SGDJAudioSampleRate),
-        .recipe = recipe, .strength = strength,
+        .recipe = recipe,
+        .strength = strength,
+        .bufferedOverlap = buffered,
+        .prefetchStartFrame = (uint64_t)llround(prefetchStart * SGDJAudioSampleRate),
+        .overlapFrames = overlapFrames,
+        .incomingCueFrame = cueFrames,
+        .deckARate = rateA,
+        .deckBRate = rateB,
     };
     SGDJAudioSetPlan(_audio, plan);
 
     _planValid = YES;
+    _planBuffered = buffered;
     _planTrack = _trackHash;
     _planNext = _nextHash;
-    _planStart = start;
+    _planStart = mixStart;
     _planEnd = state.duration;
     _incomingDuration = incoming;
-    _tempoRatio = ratio;
+    _tempoRatio = v1Ratio;
     _planRecipe = recipe;
     _planReason = reason;
 
-    SGLog(@"dj plan: A %016llx %.1f BPM/%.2f %@/%.2f -> B %016llx %.1f BPM/%.2f %@/%.2f; %@ %.2f-%.2f s, in %.2f s, tempo %.3f, boundary %@%@",
+    SGLog(@"dj plan: A %016llx %.1f BPM/%.2f %@/%.2f -> B %016llx %.1f BPM/%.2f %@/%.2f; %@ %@ %.2f s overlap, B cue %.2f s, deck rates %.4f/%.4f, prefetch %.2f s, boundary %@%@",
           (unsigned long long)_trackHash, a.bpm, a.bpmConfidence, camelotText(a), a.keyConfidence,
           (unsigned long long)_nextHash, b.bpm, b.bpmConfidence, camelotText(b), b.keyConfidence,
-          recipeName(recipe), start, state.duration, incoming, ratio,
-          SGDJAudioBoundarySupported(_audio) ? @"verified" : @"state-driven",
-          reason ? [@"; fallback " stringByAppendingString:reason] : @"");
+          buffered ? @"V2" : @"V1", recipeName(recipe), overlapSeconds, incomingCueSeconds,
+          rateA, rateB, prefetchStart, SGDJAudioBoundarySupported(_audio) ? @"verified" : @"unavailable",
+          reason ? [@"; " stringByAppendingString:reason] : @"");
     publishState(SGDJStatePreparing);
 }
 
@@ -689,10 +737,10 @@ static void publishState(SGDJState state) {
         return;
     }
 
-    // Detect a seek from the continuously computed player position rather than adding another
-    // player command hook. Normal speed changes are accounted for in the expected movement.
+    // Decoder prefetch deliberately runs ahead of the visible Spotify clock in V2, so the
+    // clock-delta seek heuristic is used only by the sequential V1 path.
     CFTimeInterval now = CACurrentMediaTime();
-    if ([_lastPositionTrack isEqualToString:_track] && _lastTick > 0 && !state.isPaused) {
+    if (!_planBuffered && [_lastPositionTrack isEqualToString:_track] && _lastTick > 0 && !state.isPaused) {
         double elapsed = now - _lastTick;
         double moved = state.position - _lastPosition;
         double expected = elapsed * MAX(0.25, SGPlayerSpeed());
@@ -706,30 +754,45 @@ static void publishState(SGDJState state) {
     _lastTick = now;
     _lastPositionTrack = _track;
 
-    // A verified source boundary can cross before the main-thread player state catches up.
-    uint64_t audibleTrack = SGDJAudioCurrentTrack(_audio);
-    if (_planValid && audibleTrack == _planNext && _trackHash == _planTrack) {
-        [self restoreTempo];
-        publishState(SGDJStateTransition);
-    }
-
-    if (_planValid && _trackHash == _planTrack) {
-        if (state.position >= _planStart) {
-            [self beginTempoIfNeeded];
+    if (_planValid && _planBuffered) {
+        if (SGDJAudioBufferedMixActive(_audio)) {
             publishState(SGDJStateTransition);
-        } else {
-            publishState(SGDJStatePreparing);
-        }
-    } else if (_planValid && _trackHash == _planNext) {
-        if (state.position >= _incomingDuration) {
-            SGLog(@"dj: %@ transition complete; incoming %.2f s", recipeName(_planRecipe), state.position);
+        } else if (SGDJAudioBufferedMixCompleted(_audio)) {
+            uint64_t overlap = SGDJAudioBufferedOverlapFrames(_audio);
+            uint64_t underruns = SGDJAudioBufferedUnderruns(_audio);
+            SGLog(@"dj: V2 %@ complete; actual overlap %.2f s, buffered underruns %llu",
+                  recipeName(_planRecipe), overlap / (double)SGDJAudioSampleRate,
+                  (unsigned long long)underruns);
             SGDJAudioClearPlan(_audio);
             _planValid = NO;
+            _planBuffered = NO;
             _planTrack = _planNext = 0;
             _planReason = nil;
             publishState(SGDJStateIdle);
         } else {
+            publishState(SGDJStatePreparing);
+        }
+    } else {
+        // V1 fallback uses the normal Spotify clock and global time/pitch path.
+        uint64_t decodedTrack = SGDJAudioCurrentTrack(_audio);
+        if (_planValid && decodedTrack == _planNext && _trackHash == _planTrack) {
+            [self restoreTempo];
             publishState(SGDJStateTransition);
+        }
+        if (_planValid && _trackHash == _planTrack) {
+            if (state.position >= _planStart) {
+                [self beginTempoIfNeeded];
+                publishState(SGDJStateTransition);
+            } else publishState(SGDJStatePreparing);
+        } else if (_planValid && _trackHash == _planNext) {
+            if (state.position >= _incomingDuration) {
+                SGLog(@"dj: V1 %@ transition complete; incoming %.2f s", recipeName(_planRecipe), state.position);
+                SGDJAudioClearPlan(_audio);
+                _planValid = NO;
+                _planTrack = _planNext = 0;
+                _planReason = nil;
+                publishState(SGDJStateIdle);
+            } else publishState(SGDJStateTransition);
         }
     }
 
@@ -737,7 +800,7 @@ static void publishState(SGDJState state) {
         SGDJAnalysisSnapshot a = [self bestSnapshotForURI:_track hash:_trackHash];
         double bpm = a.bpmConfidence >= 0.15 && a.bpm > 0 ? a.bpm : 120;
         double longest = 16 * 60.0 / bpm;
-        double lead = clampDouble(longest + 4.0, 8.0, 18.0);
+        double lead = clampDouble(longest * 2.3 + 3.0, 14.0, 30.0);
         if (state.duration - state.position <= lead) [self buildPlanForState:state];
     }
 
@@ -792,8 +855,11 @@ static void publishState(SGDJState state) {
 - (NSString *)mixSummary {
     if (!SGDJEnabled()) return @"Off";
     if (_planValid) {
-        NSString *tempo = fabs(_tempoRatio - 1) >= 0.005 ? [NSString stringWithFormat:@" · %.3f× tempo", _tempoRatio] : @"";
-        return [NSString stringWithFormat:@"%@ · %.1f s%@", recipeName(_planRecipe), MAX(0, _planEnd - _planStart), tempo];
+        NSString *engine = _planBuffered ? @"V2" : @"V1";
+        NSString *tempo = (!_planBuffered && fabs(_tempoRatio - 1) >= 0.005) ?
+            [NSString stringWithFormat:@" · %.3f× tempo", _tempoRatio] : @"";
+        return [NSString stringWithFormat:@"%@ %@ · %.1f s%@", engine, recipeName(_planRecipe),
+                MAX(0, _planEnd - _planStart), tempo];
     }
     if (!SGDJAudioAttached(_audio)) return @"Waiting for audio";
     return _nextHash ? @"Ready for next track" : @"Ready";
@@ -805,7 +871,7 @@ static void publishState(SGDJState state) {
     __block unsigned attempts = 0;
     dispatch_sync(_analysisQueue, ^{
         SGDJAccumulator *acc = self.analysis[@(self.trackHash)];
-        if (acc) attempts = acc->_beatAttempts;
+        if (acc) attempts = [acc beatAttempts];
     });
     if (value.bpmConfidence < 0.30) {
         if (attempts >= 2) return @"BeatIt no grid · safe fallback";
