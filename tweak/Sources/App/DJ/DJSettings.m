@@ -29,7 +29,7 @@ UIViewController *SGDJSettingsPage(void) {
         switch (SGDJCurrentState()) {
             case SGDJStatePreparing: return @"Preparing";
             case SGDJStateTransition: return @"Transition";
-            case SGDJStateIdle: return @"Ready";
+            case SGDJStateIdle: return SGDJV2Available() ? @"V2 Ready" : @"V1 Ready";
             default: return @"Off";
         }
     });
