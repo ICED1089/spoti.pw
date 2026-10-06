@@ -1,6 +1,7 @@
 #import "Shared/Audio/SGAudioPipeline.h"
 #import "Shared/Audio/SGAudioSourceQueue.h"
 #import "Core/SGLog.h"
+#import "Core/SGAudioStatus.h"
 #import "Core/SGRebind.h"
 #import <pthread.h>
 #import <stdatomic.h>
@@ -397,14 +398,17 @@ static void install(void) {
         if (!SGRebindImport("AudioOutputUnitStart", start, (void **)&originalStart) || !originalStart) {
             originalStart = NULL;
             failureReason = "AudioOutputUnitStart import unavailable";
+            SGAudioStatusSet(NO, @"AudioOutputUnitStart import unavailable");
             SGLog(@"audio pipeline: Spotify output import unavailable");
             return;
         }
         atomic_store(&available, true);
+        SGAudioStatusSet(YES, nil);
         if (!SGRebindImport("AudioComponentInstanceDispose", dispose, (void **)&originalDispose)) originalDispose = NULL;
         if (!SGRebindImport("AudioUnitSetProperty", setProperty, (void **)&originalSet) || !originalSet) {
             originalSet = NULL;
             failureReason = "AudioUnitSetProperty import unavailable";
+            SGAudioStatusSet(YES, @"AudioUnitSetProperty import unavailable; output processing only");
             SGLog(@"audio pipeline: mixer import unavailable; output processing only");
         }
     });
