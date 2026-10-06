@@ -40,6 +40,7 @@ static BOOL sg_tappedPaused;
 static __weak SGRGlyphView *sg_playGlyph;
 static __weak UIView *sg_controlsHost;
 static __weak UILabel *sg_djIndicator;
+static __weak UIView *sg_djDurationHost;
 
 void SGRPlayerVanish(UIView *view) {
     if (!view) return;
@@ -442,6 +443,8 @@ static void refreshDJIndicator(void) {
 }
 
 static void layOutDJIndicator(UIView *host) {
+    if (!host) return;
+    sg_djDurationHost = host;
     UIView *parent = host.superview;
     if (!parent) return;
     UILabel *label = objc_getAssociatedObject(host, &kDJIndicatorKey);
@@ -497,7 +500,7 @@ static void layOutTimes(UIViewController *unit) {
     sg_controlsWatcher = [SGRPlayerControlsWatcher new];
     SGAddPlayerStateObserver(sg_controlsWatcher);
     [NSNotificationCenter.defaultCenter addObserverForName:SGDJStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-        refreshDJIndicator();
+        layOutDJIndicator(sg_djDurationHost);
     }];
     SGRequireClasses(@[
         @"_TtC20NowPlaying_ModesImpl28PlaybackControlsElementsUnit",
