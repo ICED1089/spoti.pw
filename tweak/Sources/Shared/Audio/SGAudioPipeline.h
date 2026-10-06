@@ -23,6 +23,8 @@ typedef struct {
 // Register immutable, process-lifetime storage, during startup only. No dynamic callbacks/blocks.
 bool SGAudioPipelineRegister(SGAudioStage stage, const SGAudioProcessor *processor);
 bool SGAudioPipelineAvailable(void);
+// Nil when the core hook installed. Otherwise a short compatibility reason suitable for diagnostics.
+const char *SGAudioPipelineFailureReason(void);
 bool SGAudioPipelineTapped(void);
 UInt32 SGAudioPipelineMaximumFrames(void);
 // Input to speed/pitch: the mixer in unique sample-time chunks, then source-domain processing.
