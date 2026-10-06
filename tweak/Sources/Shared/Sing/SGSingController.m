@@ -7,6 +7,7 @@
 #import "Shared/Audio/SGAudioPipeline.h"
 #import "Shared/Player/PlayerState.h"
 #import "Shared/Player/SpeedPitch.h"
+#import "Shared/DJ/SGDJ.h"
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
 
@@ -447,7 +448,7 @@ BOOL SGSingSupported(void) {
     return NO;
 }
 void SGSingConfigure(BOOL enabled) {
-    enabled = enabled && SGSingSupported();
+    enabled = enabled && SGSingSupported() && !SGDJEnabled();
     if (enabled == sg_configured) return;
     sg_configured = enabled;
     if (enabled && !sg_controller) sg_controller = [SGSingController new];
