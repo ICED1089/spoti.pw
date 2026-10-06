@@ -21,7 +21,7 @@
 
 // What is shown with a source's lines: its name, or the whole line a source's terms ask for (the
 // catalogue it passed on, the people who made the sync), with the pages it has to lead to. A
-// required credit shows whether or not Show source is on.
+// required marks attribution requested by a provider; the personal fork still hides it when Show source is off.
 @interface SGLyricsCredit : NSObject
 @property (nonatomic, copy) NSString *text;
 @property (nonatomic, copy) NSArray<NSString *> *linkTitles;
