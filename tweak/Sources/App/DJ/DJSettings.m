@@ -4,7 +4,7 @@
 #import "DJSettings.h"
 
 UIViewController *SGDJSettingsPage(void) {
-    SGModRow *enabled = SGOptionRow(@"DJ Mix", @"Automatically prepares musical transitions between tracks", SGKeyDJEnabled);
+    SGModRow *enabled = SGOptionRow(@"DJ Mix", @"Beat-aware buffered transitions between tracks", SGKeyDJEnabled);
     enabled.symbol = @"waveform";
     enabled.changed = ^(BOOL on) { SGDJRefreshConfiguration(); };
 
@@ -46,7 +46,7 @@ UIViewController *SGDJSettingsPage(void) {
 
     NSArray<SGModSection *> *sections = @[
         SGNotedSection(nil, @[enabled],
-                       @"DJ Mix analyzes decoded audio locally, caches BPM/key information, and applies beat-aware single-stream transitions. Unknown tracks fall back safely while they are learned."),
+                       @"DJ Mix analyzes decoded audio locally and caches its results. On verified Spotify builds, V2 buffers both sides of a natural track boundary for a real overlapping mix; otherwise it falls back safely."),
         SGSection(@"Mixing", @[style, intensity]),
         SGSection(@"Player", @[indicator, status, mix, analysis]),
     ];
