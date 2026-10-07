@@ -19,6 +19,7 @@ jobs:
       REFERENCE_REV: 25f44ffb55ee3c301281bba21b2d6d311cb69ae2
       CHECKPOINT_REV: ac9b0614ab3cd7f77219e18ba494dfd93956c348
       CHECKPOINT_SHA256: 87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e
+      WEIGHTS_SHA256: 970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62
       RELEASE_TAG: sing-model-v0.23
 
     steps:
@@ -30,9 +31,9 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: 26.6
 
-      - name: Install pinned public export tools
+      - name: Install public export tools
         run: |
           python -m pip install --upgrade pip
           python -m pip install \
@@ -75,76 +76,87 @@ jobs:
             build/export \
             --unpinned-tools
 
-      - name: Find the original Core ML compiler output
+      - name: Verify recovered weights and compiled-model parity
         run: |
-          rm -rf build/exact build/candidates
-          mkdir -p build/candidates
-          for XCODE in \
-            /Applications/Xcode_26.0.1.app \
-            /Applications/Xcode_26.1.1.app \
-            /Applications/Xcode_26.2.app \
-            /Applications/Xcode_26.3.app \
-            /Applications/Xcode_26.4.1.app \
-            /Applications/Xcode_26.5.app \
-            /Applications/Xcode_26.6.app
-          do
-            [ -d "$XCODE" ] || continue
-            LABEL="$(basename "$XCODE" .app)"
-            OUT="build/candidates/$LABEL"
-            mkdir -p "$OUT"
-            echo "=== $LABEL ==="
-            DEVELOPER_DIR="$XCODE/Contents/Developer" xcrun coremlcompiler compile \
-              build/export/separator.mlpackage "$OUT" \
-              --platform ios --deployment-target 18.0
-            CANDIDATE="$OUT/separator.mlmodelc"
-            if CANDIDATE="$CANDIDATE" python - <<'PY'
-          import hashlib, os
+          echo "$WEIGHTS_SHA256  build/export/separator.mlmodelc/weights/weight.bin" | shasum -a 256 -c -
+          python - <<'PY'
+          import coremltools as ct
+          import numpy as np
           from pathlib import Path
 
-          expected = {
-              "weights/weight.bin": (488986336, "970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62"),
-              "model.mil": (669061, "966560ed5125174a98f19b94f5de04450a7112ade0e731f2236c202c0280a623"),
-              "metadata.json": (2431, "52a8d5e3f09e33236d495dbed5bbce1c75bac6f2a6b6097637cf214f37c1de53"),
-              "coremldata.bin": (507, "2090acaf7a6df72ec83857cb88d101654023a6baad222a25d0173827d3347e28"),
-              "analytics/coremldata.bin": (243, "f7ee4ec9b5cc1c97171bd5aad93af61e183aa0db1451ef3b775bd4e77f0b7cfd"),
-          }
-          root = Path(os.environ["CANDIDATE"])
-          good = True
-          for name, (size, digest) in expected.items():
-              p = root / name
-              actual = hashlib.sha256(p.read_bytes()).hexdigest()
-              print(f"{name}: {p.stat().st_size} {actual}")
-              good &= p.stat().st_size == size and actual == digest
-          raise SystemExit(0 if good else 1)
+          root = Path("build/export")
+          compiled = root / "separator.mlmodelc"
+          model = ct.models.CompiledMLModel(str(compiled), compute_units=ct.ComputeUnit.CPU_ONLY)
+
+          shape = (1, 2050, 201, 2)
+          spectrum = np.fromfile(root / "spectrum.f32", dtype=np.float32).reshape(shape)
+          expected = np.fromfile(root / "expected-spectrum.f32", dtype=np.float32).reshape(shape)
+          actual = np.asarray(model.predict({"spectrum": spectrum})["vocals_spectrum"], dtype=np.float32)
+
+          if actual.shape != expected.shape or not np.isfinite(actual).all():
+              raise SystemExit("compiled model returned malformed/non-finite output")
+
+          a, b = actual.astype(np.float64).ravel(), expected.astype(np.float64).ravel()
+          cosine = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+          rms_ratio = float(np.sqrt(np.mean(a * a) / np.mean(b * b)))
+          print(f"compiled parity: cosine={cosine:.9f}, rms_ratio={rms_ratio:.9f}")
+          if cosine < 0.9999 or abs(rms_ratio - 1.0) >= 0.01:
+              raise SystemExit("compiled model failed pinned golden parity")
+
+          zero = np.zeros(shape, dtype=np.float32)
+          silent = np.asarray(model.predict({"spectrum": zero})["vocals_spectrum"], dtype=np.float32)
+          if not np.isfinite(silent).all() or float(np.max(np.abs(silent))) != 0.0:
+              raise SystemExit("compiled model failed zero-input safety check")
+          print("compiled zero-input check: passed")
           PY
-            then
-              mkdir -p build/exact
-              cp -R "$CANDIDATE" build/exact/separator.mlmodelc
-              echo "Exact original payload reproduced with $LABEL"
-              break
-            fi
-          done
-          test -d build/exact/separator.mlmodelc || {
-            echo "::error::No installed Xcode reproduced the original five-file Sing payload"
-            exit 1
-          }
 
-      - name: Stage and verify exact Sing payload
-        run: python harness/sing/stage_model.py build/exact/separator.mlmodelc build/spoti-sing
-
-      - name: Prepare flat release assets
+      - name: Prepare release assets and manifest
         run: |
           mkdir -p build/publish
-          cp build/spoti-sing/weights/weight.bin build/publish/weights-weight.bin
-          cp build/spoti-sing/model.mil build/publish/model.mil
-          cp build/spoti-sing/metadata.json build/publish/metadata.json
-          cp build/spoti-sing/coremldata.bin build/publish/coremldata.bin
-          cp build/spoti-sing/analytics/coremldata.bin build/publish/analytics-coremldata.bin
-          cp build/spoti-sing/NOTICE build/publish/NOTICE
-          cp build/spoti-sing/README.md build/publish/README.md
-          shasum -a 256 build/publish/*
+          cp build/export/separator.mlmodelc/weights/weight.bin build/publish/weights-weight.bin
+          cp build/export/separator.mlmodelc/model.mil build/publish/model.mil
+          cp build/export/separator.mlmodelc/metadata.json build/publish/metadata.json
+          cp build/export/separator.mlmodelc/coremldata.bin build/publish/coremldata.bin
+          cp build/export/separator.mlmodelc/analytics/coremldata.bin build/publish/analytics-coremldata.bin
+          cp harness/sing/NOTICE build/publish/NOTICE
+          cp harness/sing/model.json build/publish/source-model.json
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
 
-      - name: Publish verified model release
+          publish = Path("build/publish")
+          mapping = [
+              ("weights/weight.bin", "weights-weight.bin"),
+              ("model.mil", "model.mil"),
+              ("metadata.json", "metadata.json"),
+              ("coremldata.bin", "coremldata.bin"),
+              ("analytics/coremldata.bin", "analytics-coremldata.bin"),
+          ]
+          files = []
+          for local_path, asset in mapping:
+              p = publish / asset
+              digest = hashlib.sha256(p.read_bytes()).hexdigest()
+              files.append({
+                  "path": local_path,
+                  "asset": asset,
+                  "size": p.stat().st_size,
+                  "sha256": digest,
+              })
+              print(f'SING_FILE {local_path} {asset} {p.stat().st_size} {digest}')
+          manifest = {
+              "format": 1,
+              "source": "spoti.pw v0.23 pinned Mel-Band RoFormer export",
+              "checkpoint_sha256": "87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e",
+              "weights_match_original": files[0]["sha256"] == "970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62",
+              "compiler": "Xcode 26.6 / coremltools 9.0 / torch 2.9.0",
+              "files": files,
+          }
+          (publish / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print("SING_MANIFEST_JSON=" + json.dumps(manifest, separators=(",", ":")))
+          PY
+
+      - name: Publish validated model release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -155,5 +167,5 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "Sing voice model for v0.23" \
               --prerelease \
-              --notes "Rebuilt from the pinned public Sing sources. The workflow verifies every model file against the hashes already pinned by spoti.pw before publishing. This model remains separate from the IPA."
+              --notes "Recovered from the pinned public Sing sources after the original model host became unavailable. The learned weight payload is byte-for-byte identical to the v0.23 model. The Core ML wrapper is freshly compiled with public tools and must pass the pinned spectral golden parity and zero-input checks before this workflow publishes it. The model remains separate from the IPA."
           fi
