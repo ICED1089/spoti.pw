@@ -38,7 +38,13 @@ jobs:
           UDID=$(xcrun simctl list devices available | grep 'iPhone' | grep -Eo '[0-9A-F-]{36}' | head -1)
           test -n "$UDID"
           xcrun simctl boot "$UDID" >/dev/null 2>&1 || true
-          xcrun simctl bootstatus "$UDID" -b
+          python3 - "$UDID" <<'PY'
+          import subprocess, sys
+          try:
+              subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"], check=True, timeout=120)
+          except subprocess.TimeoutExpired:
+              raise SystemExit("simulator did not finish booting within 120 seconds")
+          PY
           xcrun simctl install "$UDID" harness/playermenu/build/PlayerMenuHarness.app
 
           set +e
@@ -47,6 +53,7 @@ jobs:
           set -e
           sleep 6
           xcrun simctl terminate "$UDID" com.vojta.playermenuharness >/dev/null 2>&1 || true
+          kill "$LOGPID" >/dev/null 2>&1 || true
           wait "$LOGPID" || true
 
           cat /tmp/player-menu.log
