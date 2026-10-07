@@ -2,10 +2,6 @@ name: Rebuild Sing voice model
 
 on:
   workflow_dispatch:
-  push:
-    branches: [dev/v0.23]
-    paths:
-      - .github/workflows/rebuild-sing-model.yml
 
 permissions:
   contents: write
@@ -161,11 +157,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" build/publish/* --clobber
-          else
-            gh release create "$RELEASE_TAG" build/publish/* \
-              --target "$GITHUB_SHA" \
-              --title "Sing voice model for v0.23" \
-              --prerelease \
-              --notes "Recovered from the pinned public Sing sources after the original model host became unavailable. The learned weight payload is byte-for-byte identical to the v0.23 model. The Core ML wrapper is freshly compiled with public tools and must pass the pinned spectral golden parity and zero-input checks before this workflow publishes it. The model remains separate from the IPA."
+            echo "::error::Release $RELEASE_TAG already exists. Refusing to overwrite assets pinned by the app; use a new tag and update the manifest instead."
+            exit 1
           fi
+          gh release create "$RELEASE_TAG" build/publish/* \
+            --target "$GITHUB_SHA" \
+            --title "Sing voice model for v0.23" \
+            --prerelease \
+            --notes "Recovered from the pinned public Sing sources after the original model host became unavailable. The learned weight payload is byte-for-byte identical to the v0.23 model. The Core ML wrapper is freshly compiled with public tools and must pass the pinned spectral golden parity and zero-input checks before this workflow publishes it. The model remains separate from the IPA."
