@@ -33,8 +33,10 @@ static const struct { const char *path; int64_t size; const char *sha256; } kFil
 enum { kFileCount = sizeof kFiles / sizeof *kFiles };
 
 static NSString *const kSessionIdentifier = @"spotifyglass.sing.model.v2";
+#if SGSingModelFlatAssets
 static NSString *const kModelSourceVersionKey = @"spotifyglass.sing.modelSourceVersion";
 static const NSInteger kModelSourceVersion = 2;
+#endif
 static const int64_t kHeadroom = 64ll << 20;               // free space left over once the model is in
 static const NSTimeInterval kProgressInterval = 0.25;      // between two progress notifications
 
