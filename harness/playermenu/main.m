@@ -44,6 +44,15 @@ void SGSetPlayerPitchFollowsSpeed(BOOL follows) {
 }
 UIColor *SGRAccentColor(void) { return nil; }
 
+static BOOL sg_musicHaptics;
+void SGSetMusicHapticsEnabled(BOOL on) { sg_musicHaptics = on; NSLog(@"[harness] Music Haptics %s", on ? "on" : "off"); }
+BOOL SGSingSupported(void) { return YES; }
+NSInteger SGSingModelCurrentState(void) { return 3; } // SGSingModelInstalled
+static BOOL sg_singConfigured, sg_singEnabled;
+void SGRSingApplySwitch(void) { sg_singConfigured = [[NSUserDefaults standardUserDefaults] boolForKey:@"spotifyglass.redesign.sing"]; }
+BOOL SGSingEnabled(void) { return sg_singConfigured && sg_singEnabled; }
+void SGSingSetEnabled(BOOL enabled) { sg_singEnabled = enabled; NSLog(@"[harness] Sing Mode %s", enabled ? "on" : "off"); }
+
 static BOOL argument(NSString *name) {
     return [NSProcessInfo.processInfo.arguments containsObject:name];
 }
