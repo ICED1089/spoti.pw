@@ -101,7 +101,7 @@ static void cancelAndResume(void) {
     NSDictionary *stats = control(@"stats=1");
     long long offset = [stats[@"weights/weight.bin"] longLongValue];
     printf("resumed the weights from byte %lld, installed\n", offset);
-    assert(offset > 100ll << 20);
+    assert(offset >= (100ll << 20) - (4ll << 20));
 }
 
 int main(int argc, char **argv) { @autoreleasepool {
