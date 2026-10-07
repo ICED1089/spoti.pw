@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/test-sing-model-download.yml
       - tweak/Sources/Shared/Sing/SGSingModel.m
+      - harness/sing/model_test.m
 
 jobs:
   test:
