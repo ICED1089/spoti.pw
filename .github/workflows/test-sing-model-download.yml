@@ -1,0 +1,39 @@
+name: Test Sing model download
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [stable/v0.23]
+    paths:
+      - .github/workflows/test-sing-model-download.yml
+      - tweak/Sources/Shared/Sing/SGSingModel.m
+      - harness/sing/model_test.m
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch published Sing model exactly as external files
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/ICED1089/spoti.pw/releases/download/sing-model-v0.23"
+          mkdir -p build/spoti-sing/weights build/spoti-sing/analytics
+          curl --fail --location --retry 3 "$BASE/weights-weight.bin" -o build/spoti-sing/weights/weight.bin
+          curl --fail --location --retry 3 "$BASE/model.mil" -o build/spoti-sing/model.mil
+          curl --fail --location --retry 3 "$BASE/metadata.json" -o build/spoti-sing/metadata.json
+          curl --fail --location --retry 3 "$BASE/coremldata.bin" -o build/spoti-sing/coremldata.bin
+          curl --fail --location --retry 3 "$BASE/analytics-coremldata.bin" -o build/spoti-sing/analytics/coremldata.bin
+
+      - name: Verify published hashes
+        run: |
+          echo "970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62  build/spoti-sing/weights/weight.bin" | shasum -a 256 -c -
+          echo "1a69afe6a22491a50b9c2b34342559f27b2847a55f05199f41202d73e96895ad  build/spoti-sing/model.mil" | shasum -a 256 -c -
+          echo "8eae0bb22d41cfd9f57018c02f017a548eaa9a57e75d80c94620454478d9c50f  build/spoti-sing/metadata.json" | shasum -a 256 -c -
+          echo "ad80c4acd630cb2972f47d558a979f524712951527189c61f2e31acff2ad9e53  build/spoti-sing/coremldata.bin" | shasum -a 256 -c -
+          echo "3c42ae03864bc59921fb7c404b248e77b41303adfcddf16d8f64c8dd3facdf26  build/spoti-sing/analytics/coremldata.bin" | shasum -a 256 -c -
+
+      - name: Run production downloader integration tests
+        run: python3 harness/sing/model_test.py build/spoti-sing
