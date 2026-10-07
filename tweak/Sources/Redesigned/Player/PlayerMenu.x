@@ -17,6 +17,10 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Shared/Player/SpeedPitch.h"
+#import "Shared/Haptics/Haptics.h"
+#import "Shared/Sing/SGSingController.h"
+#import "Shared/Sing/SGSingModel.h"
+#import "Redesigned/Lyrics/Sing.h"
 #import "Player.h"
 
 // A sheet this soon after the ⋯'s tap is the player's.
@@ -43,6 +47,8 @@ static BOOL sgr_menuOn;
 static __weak UIView *sgr_moreButton;
 static NSTimeInterval sgr_moreTappedAt;
 static char kTakeoverKey, kWatchedKey, kDimmingKey, kMaskKey, kSavedMaskKey, kClaimKey, kTakenKey, kHiddenDimmingsKey, kAnchorKey;
+
+static void prewarmMenuButton(UIView *button);
 
 #pragma mark - where each of Spotify's rows goes
 
@@ -114,6 +120,15 @@ void SGRPlayerMenuWatchMoreButton(UIView *button) {
     tap.delaysTouchesEnded = NO;
     tap.delegate = watcher;
     [button addGestureRecognizer:tap];
+
+    // The system context-menu interaction and the archived last-row model are both otherwise first touched
+    // after the tap. Warm them while the player is already on screen so the ⋯ path only has to hide
+    // Spotify's sheet and ask UIKit to present.
+    __weak UIView *weakButton = button;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *strongButton = weakButton;
+        if (strongButton) prewarmMenuButton(strongButton);
+    });
 }
 
 #pragma mark - Spotify's rows, read
@@ -350,6 +365,18 @@ static SGRPlayerMenuAnchor *anchorIn(UIView *button) {
     if (anchor.superview != button) [button addSubview:anchor];
     anchor.frame = button.bounds;
     return anchor;
+}
+
+static void prewarmMenuButton(UIView *button) {
+    SGRPlayerMenuAnchor *anchor = anchorIn(button);
+    (void)lastRows();
+    if (!anchor.menu) {
+        UIAction *loading = [UIAction actionWithTitle:@"Loading…" image:nil identifier:nil handler:^(__kindof UIAction *action) {}];
+        loading.attributes = UIMenuElementAttributesDisabled;
+        anchor.menu = [UIMenu menuWithTitle:@"" children:@[loading]];
+    }
+    // Touching this after assigning a menu makes UIKit create its context-menu machinery off the tap path.
+    (void)anchor.contextMenuInteraction;
 }
 
 #pragma mark - Speed and pitch's panel
@@ -688,6 +715,58 @@ static UIAction *speedAndPitchAction(SGRPlayerMenuTakeover *t) {
     return action;
 }
 
+static UIAction *musicHapticsAction(SGRPlayerMenuTakeover *t) {
+    BOOL on = SGFlag(SGKeyMusicHaptics, NO);
+    __weak SGRPlayerMenuTakeover *weak = t;
+    UIAction *action = [UIAction actionWithTitle:@"Music Haptics" image:symbol(@"waveform.path") identifier:nil handler:^(UIAction *sender) {
+        pick(weak, ^(SGRPlayerMenuTakeover *strong) {
+            BOOL enabled = !SGFlag(SGKeyMusicHaptics, NO);
+            [NSUserDefaults.standardUserDefaults setBool:enabled forKey:SGKeyMusicHaptics];
+            SGSetMusicHapticsEnabled(enabled);
+            SGLog(@"redesign player menu: Music Haptics %@", enabled ? @"on" : @"off");
+            finish(strong, [NSString stringWithFormat:@"Music Haptics turned %@", enabled ? @"on" : @"off"], nil);
+        });
+    }];
+    action.state = on ? UIMenuElementStateOn : UIMenuElementStateOff;
+    action.subtitle = on ? @"On" : @"Off";
+    return action;
+}
+
+static UIAction *singModeAction(SGRPlayerMenuTakeover *t) {
+    BOOL supported = SGSingSupported();
+    SGSingModelState model = SGSingModelCurrentState();
+    BOOL installed = model == SGSingModelInstalled;
+    BOOL on = SGFlag(SGRKeySing, NO) && SGSingEnabled();
+    __weak SGRPlayerMenuTakeover *weak = t;
+    UIAction *action = [UIAction actionWithTitle:@"Sing Mode" image:symbol(@"mic.fill") identifier:nil handler:^(UIAction *sender) {
+        pick(weak, ^(SGRPlayerMenuTakeover *strong) {
+            BOOL enabled = !(SGFlag(SGRKeySing, NO) && SGSingEnabled());
+            if (enabled) {
+                if (!SGFlag(SGRKeySing, NO)) {
+                    [NSUserDefaults.standardUserDefaults setBool:YES forKey:SGRKeySing];
+                    SGRSingApplySwitch();
+                }
+                SGSingSetEnabled(YES);
+            } else {
+                SGSingSetEnabled(NO);
+            }
+            SGLog(@"redesign player menu: Sing Mode %@", enabled ? @"on" : @"off");
+            finish(strong, [NSString stringWithFormat:@"Sing Mode turned %@", enabled ? @"on" : @"off"], nil);
+        });
+    }];
+    action.state = on ? UIMenuElementStateOn : UIMenuElementStateOff;
+    if (!supported) {
+        action.attributes = UIMenuElementAttributesDisabled;
+        action.subtitle = @"Requires iOS 27";
+    } else if (!installed) {
+        action.attributes = UIMenuElementAttributesDisabled;
+        action.subtitle = model == SGSingModelDownloading || model == SGSingModelChecking ? @"Voice model is still downloading" : @"Download the voice model in Mod → Karaoke";
+    } else {
+        action.subtitle = on ? @"On" : @"Off";
+    }
+    return action;
+}
+
 static UIMenu *menuFor(SGRPlayerMenuTakeover *t) {
     NSArray<SGRPlayerMenuSpotifyRow *> *rows = t.rows ?: @[];
     // Tiles in the Music app's order, Share last.
@@ -715,6 +794,8 @@ static UIMenu *menuFor(SGRPlayerMenuTakeover *t) {
         [tiles removeLastObject];
     }
     [main addObject:speedAndPitchAction(t)];
+    [main addObject:musicHapticsAction(t)];
+    [main addObject:singModeAction(t)];
     if (more.count == 1) {
         [feedback addObject:more.firstObject];
     } else if (more.count) {
@@ -760,7 +841,12 @@ static void openMenu(SGRPlayerMenuTakeover *t) {
     if (button.window) {
         t.anchor = anchorIn(button);
         __weak SGRPlayerMenuTakeover *weak = t;
-        t.anchor.shown = ^{ weak.shown = YES; };
+        t.anchor.shown = ^{
+            SGRPlayerMenuTakeover *strong = weak;
+            if (!strong) return;
+            strong.shown = YES;
+            SGLog(@"redesign player menu: system menu visible %.2f s after the ⋯ tap", CACurrentMediaTime() - strong.tappedAt);
+        };
         t.anchor.closed = ^{ menuClosed(weak); };
         showRows(t);
     }
