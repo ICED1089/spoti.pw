@@ -75,11 +75,30 @@ jobs:
             build/export \
             --unpinned-tools
 
-      - name: Stage and verify exact Sing payload
+      - name: Find the original Core ML compiler output
         run: |
-          python harness/sing/stage_model.py build/export/separator.mlmodelc build/spoti-sing
-          python - <<'PY'
-          import hashlib
+          rm -rf build/exact build/candidates
+          mkdir -p build/candidates
+          for XCODE in \
+            /Applications/Xcode_26.0.1.app \
+            /Applications/Xcode_26.1.1.app \
+            /Applications/Xcode_26.2.app \
+            /Applications/Xcode_26.3.app \
+            /Applications/Xcode_26.4.1.app \
+            /Applications/Xcode_26.5.app \
+            /Applications/Xcode_26.6.app
+          do
+            [ -d "$XCODE" ] || continue
+            LABEL="$(basename "$XCODE" .app)"
+            OUT="build/candidates/$LABEL"
+            mkdir -p "$OUT"
+            echo "=== $LABEL ==="
+            DEVELOPER_DIR="$XCODE/Contents/Developer" xcrun coremlcompiler compile \
+              build/export/separator.mlpackage "$OUT" \
+              --platform ios --deployment-target 18.0
+            CANDIDATE="$OUT/separator.mlmodelc"
+            if CANDIDATE="$CANDIDATE" python - <<'PY'
+          import hashlib, os
           from pathlib import Path
 
           expected = {
@@ -89,14 +108,29 @@ jobs:
               "coremldata.bin": (507, "2090acaf7a6df72ec83857cb88d101654023a6baad222a25d0173827d3347e28"),
               "analytics/coremldata.bin": (243, "f7ee4ec9b5cc1c97171bd5aad93af61e183aa0db1451ef3b775bd4e77f0b7cfd"),
           }
-          root = Path("build/spoti-sing")
+          root = Path(os.environ["CANDIDATE"])
+          good = True
           for name, (size, digest) in expected.items():
               p = root / name
               actual = hashlib.sha256(p.read_bytes()).hexdigest()
-              if p.stat().st_size != size or actual != digest:
-                  raise SystemExit(f"{name}: payload mismatch")
-              print(f"{name}: verified")
+              print(f"{name}: {p.stat().st_size} {actual}")
+              good &= p.stat().st_size == size and actual == digest
+          raise SystemExit(0 if good else 1)
           PY
+            then
+              mkdir -p build/exact
+              cp -R "$CANDIDATE" build/exact/separator.mlmodelc
+              echo "Exact original payload reproduced with $LABEL"
+              break
+            fi
+          done
+          test -d build/exact/separator.mlmodelc || {
+            echo "::error::No installed Xcode reproduced the original five-file Sing payload"
+            exit 1
+          }
+
+      - name: Stage and verify exact Sing payload
+        run: python harness/sing/stage_model.py build/exact/separator.mlmodelc build/spoti-sing
 
       - name: Prepare flat release assets
         run: |
