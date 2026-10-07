@@ -10,7 +10,12 @@ NSNotificationName const SGSingModelDidChangeNotification = @"spotifyglass.singM
 // The model host: a Hugging Face repository holding the compiled model's files at the paths below. A test
 // build serves them itself and keeps them somewhere of its own (harness/sing/model_test.m).
 #ifndef SGSingModelBase
-#define SGSingModelBase @"https://huggingface.co/Darkkos/spoti-sing/resolve/main/"
+// Personal recovery host: the model stays outside the IPA and is downloaded on demand.
+#define SGSingModelBase @"https://github.com/ICED1089/spoti.pw/releases/download/sing-model-v0.23/"
+#define SGSingModelFlatAssets 1
+#endif
+#ifndef SGSingModelFlatAssets
+#define SGSingModelFlatAssets 0
 #endif
 #ifndef SGSingModelRoot
 #define SGSingModelRoot nil
@@ -20,14 +25,18 @@ NSNotificationName const SGSingModelDidChangeNotification = @"spotifyglass.singM
 // files, at these sizes and with these hashes, ever become the model; the largest comes first.
 static const struct { const char *path; int64_t size; const char *sha256; } kFiles[] = {
     {"weights/weight.bin", 488986336, "970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62"},
-    {"model.mil", 669061, "966560ed5125174a98f19b94f5de04450a7112ade0e731f2236c202c0280a623"},
-    {"metadata.json", 2431, "52a8d5e3f09e33236d495dbed5bbce1c75bac6f2a6b6097637cf214f37c1de53"},
-    {"coremldata.bin", 507, "2090acaf7a6df72ec83857cb88d101654023a6baad222a25d0173827d3347e28"},
-    {"analytics/coremldata.bin", 243, "f7ee4ec9b5cc1c97171bd5aad93af61e183aa0db1451ef3b775bd4e77f0b7cfd"},
+    {"model.mil", 669059, "1a69afe6a22491a50b9c2b34342559f27b2847a55f05199f41202d73e96895ad"},
+    {"metadata.json", 2431, "8eae0bb22d41cfd9f57018c02f017a548eaa9a57e75d80c94620454478d9c50f"},
+    {"coremldata.bin", 507, "ad80c4acd630cb2972f47d558a979f524712951527189c61f2e31acff2ad9e53"},
+    {"analytics/coremldata.bin", 243, "3c42ae03864bc59921fb7c404b248e77b41303adfcddf16d8f64c8dd3facdf26"},
 };
 enum { kFileCount = sizeof kFiles / sizeof *kFiles };
 
-static NSString *const kSessionIdentifier = @"spotifyglass.sing.model";
+static NSString *const kSessionIdentifier = @"spotifyglass.sing.model.v2";
+#if SGSingModelFlatAssets
+static NSString *const kModelSourceVersionKey = @"spotifyglass.sing.modelSourceVersion";
+static const NSInteger kModelSourceVersion = 2;
+#endif
 static const int64_t kHeadroom = 64ll << 20;               // free space left over once the model is in
 static const NSTimeInterval kProgressInterval = 0.25;      // between two progress notifications
 
@@ -39,6 +48,7 @@ static NSString *sg_failure;
 static BOOL sg_done[kFileCount], sg_checking[kFileCount], sg_restarted[kFileCount], sg_fromResume[kFileCount];
 static int64_t sg_bytes[kFileCount];
 static NSString *sg_rejected[kFileCount];
+static NSInteger sg_rejectedStatus[kFileCount];
 static NSMutableDictionary<NSNumber *, NSURLSessionDownloadTask *> *sg_tasks;
 static NSUInteger sg_epoch;
 static NSURLSession *sg_session;
@@ -48,6 +58,24 @@ static NSTimeInterval sg_lastPost;
 #pragma mark - the files
 
 static NSString *pathOf(int i) { return @(kFiles[i].path); }
+
+#if SGSingModelFlatAssets
+static const char *kRemoteFiles[] = {
+    "weights-weight.bin",
+    "model.mil",
+    "metadata.json",
+    "coremldata.bin",
+    "analytics-coremldata.bin",
+};
+#endif
+
+static NSString *remotePathOf(int i) {
+#if SGSingModelFlatAssets
+    return @(kRemoteFiles[i]);
+#else
+    return pathOf(i);
+#endif
+}
 
 static NSURL *singFolder(void) {
     static NSURL *folder;
@@ -108,11 +136,24 @@ static BOOL makeFolders(NSError **error) {
     return YES;
 }
 
+// A source change invalidates saved resume requests and already-verified staging files from the
+// previous host/manifest. The installed folder is left alone; its manifest check below decides whether
+// it is still the model this build accepts.
+static void migrateModelSourceIfNeeded(void) {
+#if SGSingModelFlatAssets
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults integerForKey:kModelSourceVersionKey] == kModelSourceVersion) return;
+    [NSFileManager.defaultManager removeItemAtURL:staging() error:nil];
+    [defaults setInteger:kModelSourceVersion forKey:kModelSourceVersionKey];
+#endif
+}
+
 // What is on the disk, read once: the installed model when every file has its size, else the staged files
 // (named only once checked) and what each resume kept.
 static void load(void) {
     if (sg_loaded) return;
     sg_loaded = YES;
+    migrateModelSourceIfNeeded();
     sg_tasks = [NSMutableDictionary dictionary];
     sg_installed = YES;
     for (int i = 0; i < kFileCount; i++)
@@ -190,7 +231,7 @@ static void startFile(int i) {
     }
     sg_fromResume[i] = task != nil;
     if (!task) {
-        NSURL *url = [NSURL URLWithString:pathOf(i) relativeToURL:[NSURL URLWithString:SGSingModelBase]];
+        NSURL *url = [NSURL URLWithString:remotePathOf(i) relativeToURL:[NSURL URLWithString:SGSingModelBase]];
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url.absoluteURL];
         request.allowsExpensiveNetworkAccess = sg_metered;
         request.allowsConstrainedNetworkAccess = sg_metered;
@@ -300,6 +341,7 @@ static int indexOf(NSURLSessionTask *task) {
     if (i < 0 || !sg_want || sg_done[i] || sg_checking[i]) return;
     NSInteger status = [task.response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)task.response).statusCode : 0;
     if (status != 200 && status != 206) {
+        sg_rejectedStatus[i] = status;
         sg_rejected[i] = [NSString stringWithFormat:@"The voice model's host answered %ld.", (long)status];
         return;
     }
@@ -325,7 +367,9 @@ static int indexOf(NSURLSessionTask *task) {
     BOOL ours = sg_tasks[@(i)] == task;
     [sg_tasks removeObjectForKey:@(i)];
     NSString *rejected = sg_rejected[i];
+    NSInteger rejectedStatus = sg_rejectedStatus[i];
     sg_rejected[i] = nil;
+    sg_rejectedStatus[i] = 0;
     if (!ours || !sg_want) { post(NO); return; }   // stopped here, which kept or dropped its resume itself
     if (error) {
         keepResume(i, error.userInfo[NSURLSessionDownloadTaskResumeData]);
@@ -340,6 +384,17 @@ static int indexOf(NSURLSessionTask *task) {
             return;
         }
         fail([NSString stringWithFormat:@"The download stopped: %@", error.localizedDescription]);
+        return;
+    }
+    // Resume data can contain the old host's temporary/signed request. If that request is no longer
+    // authorized, throw it away and make one clean request to the canonical model source once.
+    if (rejected && sg_fromResume[i] && !sg_restarted[i] &&
+        (rejectedStatus == 401 || rejectedStatus == 403 || rejectedStatus == 416)) {
+        sg_restarted[i] = YES;
+        sg_bytes[i] = 0;
+        SGLog(@"Sing voice model: %s starting fresh after resumed request got %ld", kFiles[i].path, (long)rejectedStatus);
+        startFile(i);
+        post(NO);
         return;
     }
     if (rejected) fail(rejected);
