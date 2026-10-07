@@ -6,6 +6,7 @@ on:
     branches: [dev/v0.23]
     paths:
       - .github/workflows/test-sing-model-download.yml
+      - tweak/Sources/Shared/Sing/SGSingModel.m
 
 jobs:
   test:
