@@ -139,6 +139,13 @@ jobs:
         run: |
           test -f "$FINAL_IPA"
           unzip -l "$FINAL_IPA" | grep -q spotifyglass.dylib
+          if [ "$SG_DJ_BEATIT" = "1" ]; then
+            unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json' || {
+              echo "::error::BeatIt Core ML resources absent from IPA"
+              exit 1
+            }
+            echo "Pinned BeatIt Core ML resource found in dev IPA" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if ! unzip -l "$FINAL_IPA" | grep -q SpotifyGlassLiveActivity.appex; then
             echo "::warning::Live Activity extension was not preserved"
           fi
