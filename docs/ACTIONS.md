@@ -18,6 +18,7 @@ The old standalone menu, Sing download verification, and DJ iOS compile workflow
 ## Current DJ Mix implementation
 
 - `tweak/Sources/Shared/DJMix/SGDJBeatPlan.m`: standalone onset/BPM detector, conservative phrase-aware planner, buffered two-PCM overlap gate and continuous equal-power offline mixer.
+- `tweak/Sources/Shared/DJMix/SGDJTwoDeck.m`: bounded two-deck PCM ring and fail-closed mixing, exercised with synthetic independent tracks. It has no Spotify second decoder attached.
 - `tweak/Sources/Shared/DJMix/SGDJBeatProbe.x`: **off-by-default** passive output observer that records an envelope, computes beat grids on a utility queue, and logs the result. This does not own the audio source or consume Spotify's next-track decoder.
 - `tweak/Sources/Shared/Audio/SGAudioPipeline.h`: a separate passive monitoring slot after existing audio features.
 - `tests/djmix/beat_plan_test.c`: synthetic tempo, guard-rail, clipping and chunk continuity tests.
