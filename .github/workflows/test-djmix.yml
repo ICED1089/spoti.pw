@@ -5,6 +5,9 @@ on:
     branches: [dev/v0.23]
     paths:
       - 'tweak/Sources/Shared/DJMix/**'
+      - 'tweak/Makefile'
+      - 'vendor/beatit/**'
+      - 'scripts/pipeline.sh'
       - 'tweak/Sources/Shared/Audio/SGAudioPipeline.h'
       - 'tweak/Sources/App/Pages.m'
       - 'tweak/Sources/Shared/Sing/**'
@@ -125,6 +128,7 @@ jobs:
       - name: Compile v0.23 tweak with pinned open-source BeatIt Core ML
         run: |
           gmake -C tweak clean package FINALPACKAGE=1 SG_DJ_BEATIT=1
+          test -f vendor/beatit/build/SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json
       - name: Keep package and report
         uses: actions/upload-artifact@v4
         if: success()
