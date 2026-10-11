@@ -32,6 +32,7 @@ jobs:
         run: |
           clang -std=c11 -Wall -Wextra -Werror -O2 -x c \
             tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tweak/Sources/Shared/DJMix/SGDJTwoDeck.m \
             tests/djmix/beat_plan_test.c \
             -lm -o /tmp/djmix-test
       - name: Test beat grids, PCM safety and no-second-stream failure
@@ -41,6 +42,7 @@ jobs:
           clang -std=c11 -Wall -Wextra -O1 -g \
             -fsanitize=address,undefined -fno-omit-frame-pointer -x c \
             tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tweak/Sources/Shared/DJMix/SGDJTwoDeck.m \
             tests/djmix/beat_plan_test.c \
             -lm -o /tmp/djmix-sanitize
           /tmp/djmix-sanitize
