@@ -157,7 +157,9 @@ static void tick(void) API_AVAILABLE(ios(17.0)) {
 
     NSInteger view = SGInt(SGKeyLiveActivityView, SGLiveActivityLyrics);
     BOOL paused = state.isPaused;
-    NSTimeInterval every = paused ? kPausedTick : kTick;
+    // Queue and control-panel pages do not need 4-Hz lyric boundary checking;
+    // keep the original responsive cadence only for time-synced lyrics.
+    NSTimeInterval every = paused || view != SGLiveActivityLyrics ? kPausedTick : kTick;
     if (sg_timer && sg_tickEvery != every) startTimer(every);
     NSString *line = @"", *next = @"";
     if (view == SGLiveActivityLyrics) line = lyricsLine(trackID, &next);
