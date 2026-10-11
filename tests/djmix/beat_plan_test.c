@@ -1,5 +1,6 @@
 // Host-side reproducible test: clang -std=c11 -x c SGDJBeatPlan.m beat_plan_test.c -lm
 #include "../../tweak/Sources/Shared/DJMix/SGDJBeatPlan.h"
+#include "../../tweak/Sources/Shared/DJMix/SGDJTwoDeck.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,7 +81,41 @@ static void test_mixer(void) {
     SGDJBeatMixStereo(same, b, same, N, 0, N);
     for (int i = 0; i < N * 2; ++i) require(fabs(same[i] - joined[i]) < 1e-6, "in-place A supported");
 }
+static void test_decks(void) {
+    SGDJTwoDeck *m = SGDJTwoDeckCreate(1024);
+    require(m != NULL, "create two-deck ring");
+    float a[1600], b[1600], left[800], right[800];
+    for (int i = 0; i < 1600; i++) { a[i] = .7f; b[i] = -.3f; }
+
+    require(SGDJTwoDeckFeedA(m, a, 600), "queue outgoing frames");
+    require(SGDJTwoDeckFeedB(m, b, 400), "queue partial incoming frames");
+    require(!SGDJTwoDeckArm(m, 500), "no mixing before incoming buffer fills");
+    require(SGDJTwoDeckReadyA(m) == 600 && SGDJTwoDeckReadyB(m) == 400, "failed arm consumes nothing");
+    require(SGDJTwoDeckFeedB(m, b, 200), "incoming catches up");
+    require(SGDJTwoDeckArm(m, 600), "arm only when both whole overlaps ready");
+    require(!SGDJTwoDeckRender(m, left, right, 601), "reject overrunning overlap");
+    require(SGDJTwoDeckReadyA(m) == 600 && SGDJTwoDeckReadyB(m) == 600, "bad render consumes nothing");
+    require(SGDJTwoDeckRender(m, left, right, 256), "first render quantum");
+    require(SGDJTwoDeckRender(m, left+256, right+256, 344), "second render quantum");
+    require(fabs(left[0] - .7) < 1e-6 && fabs(right[599] + .3) < 1e-6, "mix endpoints");
+    require(SGDJTwoDeckReadyA(m) == 0 && SGDJTwoDeckReadyB(m) == 0, "each deck advanced exactly once");
+    require(SGDJTwoDeckRendered(m) == 600, "total render frames tracked");
+
+    // Both ring writers now wrap at index 600; the next complete overlap
+    // still has identical endpoints and never touches uninitialized frames.
+    require(SGDJTwoDeckFeedA(m, a, 800), "wrap outgoing ring");
+    require(SGDJTwoDeckFeedB(m, b, 800), "wrap incoming ring");
+    require(SGDJTwoDeckArm(m, 800), "rearm for second overlap");
+    require(SGDJTwoDeckRender(m, left, right, 800), "render wrapped overlap");
+    require(fabs(left[0] - .7) < 1e-6 && fabs(right[799] + .3) < 1e-6, "wrapped endpoints");
+    require(SGDJTwoDeckUnderruns(m) == 0, "no underrun from wrapped ring");
+    SGDJTwoDeckResetStopped(m);
+    require(SGDJTwoDeckReadyA(m) == 0 && SGDJTwoDeckRendered(m) == 0, "safe stopped reset");
+    SGDJTwoDeckDestroy(m);
+}
+
 int main(void) {
+    test_decks();
     test_beats();
     test_planner();
     test_mixer();
