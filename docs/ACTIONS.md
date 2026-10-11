@@ -15,6 +15,16 @@ The **Release**, **CLA**, and **Publish Sing model** workflows on `main` are not
 
 The old standalone menu, Sing download verification, and DJ iOS compile workflows have been archived under [`docs/workflow-archive`](https://github.com/ICED1089/spoti.pw/tree/dev/v0.23/docs/workflow-archive). Their actions were either redundant or consolidated. Historical Action runs cannot be erased just by deleting a workflow YAML file.
 
+## Current test build choices
+
+**For this experiment:** Build IPA → select `dev/v0.23`, provide your Spotify 9.1.88 decrypted IPA URL, leave `include_beatit=true` (the dev workflow's default) to bundle the pinned MIT BeatIt Core ML model, and initially leave `include_eevee=false` to isolate audio bugs. Enable Eevee on the second test if the baseline launches correctly.
+
+BeatIt is bundled in the IPA but **does no work until** Mod Settings → Player → DJ Mix laboratory → Analyze beat grids is turned on and Spotify is restarted. The model needs about 32 seconds of observed local playback to attempt native downbeat inference. The GitHub Action now checks that the model bundle survived injection.
+
+**Sing Off regression:** In the redesigned player's three-dot menu, turn Sing on, reduce vocals, then select **Sing Mode → Off**. The switch is now persisted and the shared engine disabled; verify original vocals return after a short ramp. Repeat with playback paused and resumed. The previous stable build has this bug; the fix is only in dev until a phone test passes.
+
+For detailed licensing, architecture, tests and known blockers, see [DJ Mix open-source implementation](DJ_MIX_IMPLEMENTATION.md).
+
 ## Current DJ Mix implementation
 
 - `tweak/Sources/Shared/DJMix/SGDJBeatPlan.m`: standalone onset/BPM detector, conservative phrase-aware planner, buffered two-PCM overlap gate and continuous equal-power offline mixer.
