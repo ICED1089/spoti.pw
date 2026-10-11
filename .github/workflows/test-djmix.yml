@@ -5,6 +5,8 @@ on:
     branches: [dev/v0.23]
     paths:
       - 'tweak/Sources/Shared/DJMix/**'
+      - 'tweak/Sources/Shared/Audio/SGAudioPipeline.h'
+      - 'tweak/Sources/App/Pages.m'
       - 'tests/djmix/**'
       - '.github/workflows/test-djmix.yml'
   workflow_dispatch:
@@ -76,3 +78,37 @@ jobs:
 
       - name: Run production downloader integration tests
         run: python3 harness/sing/model_test.py build/spoti-sing
+
+  compile-dev-tweak:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          path: theos
+          submodules: recursive
+      - name: Install build prerequisites
+        run: |
+          brew install make dpkg ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Generate build-only remote-config fixture
+        run: |
+          cat > tweak/Sources/Shared/Flags/SGFlagList.m <<'EOF'
+          #import "Flags.h"
+          const SGFlagDef SGFlagTable[] = { {"test.stub", SGFlagUnknown, 0, 0, 0} };
+          const NSUInteger SGFlagCount = 0;
+          EOF
+      - name: Compile v0.23 tweak and experimental DJ code
+        run: |
+          gmake -C tweak clean package FINALPACKAGE=1
+      - name: Keep package and report
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: dev-djmix-compile-check-only
+          path: tweak/packages/*.deb
+          if-no-files-found: error
