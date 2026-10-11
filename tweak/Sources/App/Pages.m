@@ -8,6 +8,7 @@
 #import "Shared/LyricsMeanings/Meanings.h"
 #import "Shared/Player/PlayerSettings.h"
 #import "Shared/Player/SGNativeTransitions.h"
+#import "Shared/DJMix/SGDJBeatProbe.h"
 #import "Native/Appearance/Appearance.h"
 #import "Native/Navbar/Navbar.h"
 #import "Native/NowPlayingBar/NowPlayingBar.h"
