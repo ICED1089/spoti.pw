@@ -1,4 +1,5 @@
 #import "Core/SGCore.h"
+#import "LockScreenArtwork.h"
 #import "SGAppleArtwork.h"
 #import "SGCanvas.h"
 
@@ -170,7 +171,8 @@ static CFAbsoluteTime sg_quietUntil;
 // Every request goes out the way the web player's would; the answer lands on the main queue.
 static void get(NSURL *url, NSString *token, void (^done)(NSString *body, NSInteger status)) {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    request.allowsConstrainedNetworkAccess = NO;
+    // Explicit user choice; default remains no downloads on constrained networks.
+    request.allowsConstrainedNetworkAccess = SGFlag(SGKeyArtworkLowData, NO);
     [request setValue:kBrowser forHTTPHeaderField:@"User-Agent"];
     if (token) {
         [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
