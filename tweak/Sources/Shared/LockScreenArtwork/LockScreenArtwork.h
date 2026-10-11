@@ -8,6 +8,7 @@
 
 #define SGKeyLockScreenArtwork @"spotifyglass.lockscreen.animatedartwork"
 #define SGKeyLockScreenArtworkSources @"spotifyglass.lockscreen.artworksources"
+#define SGKeyArtworkLowData @"spotifyglass.artwork.allowLowData"
 
 // Where a clip can come from: the track's Canvas, or the album's animated cover on Apple Music.
 extern NSString *const SGArtworkSourceSpotify;
