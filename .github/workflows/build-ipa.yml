@@ -1,4 +1,5 @@
-name: Build IPA from your own Spotify IPA
+name: Build IPA — personal fork / optional Eevee
+run-name: "IPA ${{ github.ref_name }} • Eevee ${{ inputs.include_eevee && 'on' || 'off' }}"
 
 on:
   workflow_dispatch:
