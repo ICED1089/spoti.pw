@@ -22,9 +22,6 @@ env:
 
 run-name: "Dev checks • ${{ github.ref_name }} • Sing ${{ inputs.verify_sing && 'on' || 'off' }}"
 
-env:
-  THEOS: ${{ github.workspace }}/theos
-
 jobs:
   host-djmix-tests:
     runs-on: ubuntu-latest
