@@ -1,5 +1,5 @@
 name: Build IPA — personal fork / optional Eevee
-run-name: "IPA ${{ github.ref_name }} • Eevee ${{ inputs.include_eevee && 'on' || 'off' }}"
+run-name: "IPA ${{ github.ref_name }} • Eevee ${{ inputs.include_eevee && 'on' || 'off' }} • BeatIt ${{ inputs.include_beatit && 'on' || 'off' }}"
 
 on:
   workflow_dispatch:
@@ -8,6 +8,11 @@ on:
         description: "Direct link to a decrypted Spotify IPA"
         required: true
         type: string
+      include_beatit:
+        description: "Build MIT BeatIt Core ML rhythm/downbeat analysis (larger model, experimental)"
+        required: false
+        default: false
+        type: boolean
       include_eevee:
         description: "Also build and inject Eevee 7 into the experimental spoti.pw IPA"
         required: false
@@ -27,6 +32,7 @@ on:
 env:
   THEOS: ${{ github.workspace }}/theos
   SWIFTPROTOBUF_VERSION: "1.29.0"
+  SG_DJ_BEATIT: ${{ inputs.include_beatit && '1' || '0' }}
 
 jobs:
   build:
