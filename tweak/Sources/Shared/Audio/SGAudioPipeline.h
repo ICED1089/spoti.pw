@@ -10,6 +10,7 @@ typedef enum {
     SGAudioStageSpeedPitch,
     SGAudioStageEffects,
     SGAudioStageHaptics,
+    SGAudioStageDJProbe, // opt-in passive envelope reader; never modifies PCM
     SGAudioStageCount
 } SGAudioStage;
 
