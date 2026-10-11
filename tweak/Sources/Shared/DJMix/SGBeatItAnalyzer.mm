@@ -14,10 +14,22 @@ static NSString *modelPath(void) {
     static NSString *path;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSBundle *bundle = [NSBundle bundleWithPath:
-            [NSBundle.mainBundle pathForResource:@"SpotifyGlassDJ" ofType:@"bundle"] ?: @""];
-        path = [[bundle resourcePath] stringByAppendingPathComponent:@"BeatThis_small0.mlpackage"];
-        if (![NSFileManager.defaultManager fileExistsAtPath:path]) path = nil;
+        // Cyan may place injected resource bundles in Frameworks rather than
+        // at the .app root. Search only our app's known bundle locations.
+        NSString *app = NSBundle.mainBundle.bundlePath;
+        NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+        NSString *resource = [NSBundle.mainBundle pathForResource:@"SpotifyGlassDJ" ofType:@"bundle"];
+        if (resource.length) [candidates addObject:resource];
+        [candidates addObject:[app stringByAppendingPathComponent:@"SpotifyGlassDJ.bundle"]];
+        [candidates addObject:[app stringByAppendingPathComponent:@"Frameworks/SpotifyGlassDJ.bundle"]];
+        for (NSString *candidate in candidates) {
+            NSString *model = [candidate stringByAppendingPathComponent:@"BeatThis_small0.mlpackage"];
+            if ([NSFileManager.defaultManager fileExistsAtPath:
+                [model stringByAppendingPathComponent:@"Manifest.json"]]) {
+                path = model;
+                break;
+            }
+        }
     });
     return path;
 }
