@@ -7,6 +7,8 @@ on:
       - 'tweak/Sources/Shared/DJMix/**'
       - 'tweak/Sources/Shared/Audio/SGAudioPipeline.h'
       - 'tweak/Sources/App/Pages.m'
+      - 'tweak/Sources/Shared/Sing/**'
+      - 'tweak/Sources/Redesigned/Player/PlayerMenu.x'
       - 'tests/djmix/**'
       - '.github/workflows/test-djmix.yml'
   workflow_dispatch:
@@ -42,6 +44,21 @@ jobs:
             -lm -o /tmp/djmix-test
       - name: Test beat grids, PCM safety and no-second-stream failure
         run: /tmp/djmix-test
+      - name: Test Sing off/dry bypass and source continuity (existing production audio harness)
+        run: python3 harness/sing/test.py
+      - name: Verify Sing Off menu persists configuration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          menu = Path("tweak/Sources/Redesigned/Player/PlayerMenu.x").read_text()
+          controller = Path("tweak/Sources/Shared/Sing/SGSingController.m").read_text()
+          off = menu.split("static UIAction *singModeAction", 1)[1].split("static UIMenu *menuFor", 1)[0]
+          assert "[NSUserDefaults.standardUserDefaults setBool:NO forKey:SGRKeySing]" in off
+          assert "SGSingSetEnabled(NO);" in off
+          assert "SGRSingApplySwitch();" in off.split("SGSingSetEnabled(NO);", 1)[1]
+          assert "BOOL noActiveAudio = notPlaying(SGPlayerState()) || _interrupted;" in controller
+          print("Sing 3-dot off control flow: PASS")
+          PY
       - name: Run with sanitizers
         run: |
           clang -std=c11 -Wall -Wextra -O1 -g \
