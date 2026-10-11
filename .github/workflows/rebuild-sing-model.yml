@@ -1,4 +1,4 @@
-name: Rebuild Sing voice model
+name: Maintenance — Rebuild Sing model (manual)
 
 on:
   workflow_dispatch:
