@@ -1,5 +1,6 @@
 #import <AVFoundation/AVFoundation.h>
 #import "Core/SGCore.h"
+#import "LockScreenArtwork.h"
 #import "SGArtworkFile.h"
 
 static const unsigned long long kCap = 120 * 1024 * 1024;   // an Apple Music cover is about 8 MB
@@ -113,7 +114,7 @@ NSURLSessionTask *SGArtworkFetchAside(NSString *identifier, NSString *address, v
     if (!firstToAsk(name, done)) return nil;
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:remote];
     // Low Data Mode marks the path constrained; the download then fails rather than spending the data.
-    request.allowsConstrainedNetworkAccess = NO;
+    request.allowsConstrainedNetworkAccess = SGFlag(SGKeyArtworkLowData, NO);
     NSURLSessionDownloadTask *task = [NSURLSession.sharedSession downloadTaskWithRequest:request completionHandler:^(NSURL *temporary, NSURLResponse *response, NSError *error) {
         if (!temporary) {
             landed(name, nil, [NSString stringWithFormat:@"download failed: %@", error.localizedDescription]);
