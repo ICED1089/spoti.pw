@@ -14,12 +14,16 @@ TWEAK_NAME := spotifyglass
 
 # Optional, pinned MIT-licensed BeatIt Core ML backend (default is zero).
 SG_DJ_BEATIT ?= 0
+SG_DJ_STRETCH ?= $(SG_DJ_BEATIT)
 
 # Every source under Sources/, so a new feature needs no Makefile edit. Shared/Flags/SGFlagList.m
 # is generated from the IPA by scripts/extract-flags.py.
 spotifyglass_FILES := $(shell find Sources -name '*.m' -o -name '*.x' -o -name '*.swift' | sort)
 ifeq ($(SG_DJ_BEATIT),1)
 spotifyglass_FILES += Sources/Shared/DJMix/SGBeatItAnalyzer.mm
+endif
+ifeq ($(SG_DJ_STRETCH),1)
+spotifyglass_FILES += Sources/Shared/DJMix/SGDJStretch.mm
 endif
 spotifyglass_CFLAGS := -fobjc-arc -ISources -DSG_VERSION=\"$(SG_VERSION)\"
 spotifyglass_FRAMEWORKS := UIKit QuartzCore UniformTypeIdentifiers MediaPlayer CoreImage AudioToolbox AVFoundation CoreHaptics Accelerate Network Metal
@@ -30,6 +34,12 @@ spotifyglass_CFLAGS += -I$(SG_BEATIT)/build/source/include -I$(SG_BEATIT)/build/
 spotifyglass_FRAMEWORKS += CoreML
 spotifyglass_LDFLAGS += -lc++
 Sources/Shared/DJMix/SGBeatItAnalyzer.mm_CFLAGS := -std=c++17
+endif
+ifeq ($(SG_DJ_STRETCH),1)
+SG_STRETCH := ../vendor/signalsmith
+spotifyglass_CFLAGS += -I$(SG_STRETCH)/build/stretch -I$(SG_STRETCH)/build/linear/include -DSG_DJ_STRETCH=1
+spotifyglass_LDFLAGS += -lc++
+Sources/Shared/DJMix/SGDJStretch.mm_CFLAGS := -std=c++17 -O2
 endif
 # Runtime swizzling instead of Substrate so the dylib has no extra dependency inside the IPA.
 spotifyglass_LOGOS_DEFAULT_GENERATOR := internal
@@ -50,6 +60,12 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 # The library is brought up to date before the tweak's instance builds, so the link finds it current.
 spotifyglass.all.tweak.variables: sg-audio
+ifeq ($(SG_DJ_STRETCH),1)
+spotifyglass.all.tweak.variables: sg-signalsmith
+.PHONY: sg-signalsmith
+sg-signalsmith:
+	@$(MAKE) --no-print-directory -C $(SG_STRETCH)
+endif
 ifeq ($(SG_DJ_BEATIT),1)
 spotifyglass.all.tweak.variables: sg-beatit
 .PHONY: sg-beatit
