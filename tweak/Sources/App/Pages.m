@@ -93,6 +93,11 @@ UIViewController *SGPlayerSettingsPage(void) {
     [pages addObject:SGWithSymbol(SGPageRow(@"Lock screen widget", ^UIViewController *{ return SGLockScreenWidgetPage(); }), @"lock")];
     [sections addObject:SGSection(nil, pages)];
     [sections addObjectsFromArray:native ? SGNativePlayerScreenSections() : SGRNowPlayingSections()];
+    [sections addObject:SGNotedSection(@"DJ Mix laboratory", @[
+        SGWithSymbol(SGOptionRow(@"Analyze beat grids (experimental)",
+            @"Collect a short rhythmic envelope from local audio and estimate BPM off the render thread. This is diagnostics only: it does not mix tracks or download upcoming audio. Restart Spotify after changing.",
+            SGKeyDJBeatProbe), @"waveform.path"),
+    ], @"Requires restart. Off by default; no audio changes. View results in Mod → Copy diagnostics under 'dj lab'.")];
     [sections addObject:SGNotedSection(@"Transitions (experimental)", @[
         SGWithSymbol(SGOptionRow(@"Synchronize native crossfade",
             @"When you change the crossfade duration in Spotify's own playback settings, keep its crossfade switch in sync. Uses Spotify's existing engine; it does not unlock beat-matched AutoMix.", SGKeyNativeCrossfadeSync), @"arrow.triangle.2.circlepath"),
