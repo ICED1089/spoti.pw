@@ -9,7 +9,7 @@
 | **BeatIt / Beat This!** | [tillt/BeatIt](https://github.com/tillt/BeatIt) at `8d5f9ed80ddcdb8bbaea63d3dea26f137d366d01`; **MIT** | `vendor/beatit/Makefile` fetches only the pinned native Core ML/DBN source modules and model. `SGBeatItAnalyzer.mm`, adapted from our archived DJ branch, calls BeatIt's `analyze_with_coreml`. The vendor bundle contains its upstream license. |
 | **Existing spoti.pw audio engine** | Open-source fork's `SGAudioPipeline`, `SGTimePitch`, `SGAudioRingBuffer`, archives | The lab registers a passive output observer without replacing Sing's source processor. Our existing time/pitch machinery is the candidate for rate matching; it is not currently driving a second Spotify deck. |
 | **Switching-source algorithm reference** | [go-librespot player/source.go](https://github.com/devgianlu/go-librespot/blob/main/player/source.go), GPL-3.0 | Studied as a *design reference only*: it keeps a complete outgoing tail in reserve and requires a separately prefetched secondary audio source. No GPL code copied. |
-| **Alternative open-source pitch-preserving stretch** | [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch), MIT | Evaluated as an alternative if the existing `SGTimePitch` cannot handle a separately buffered Deck B. Not bundled yet. SoundTouch is LGPL-2.1 and has different distribution obligations. |
+| **Signalsmith Stretch + Linear** | [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch) at `a670068d9aeb64913331d5cc29337b19a457a7df`; [Signalsmith Linear](https://github.com/Signalsmith-Audio/linear) at `146b26f91b48835d665fa0498d64d9617818d27a`, both **MIT** | `vendor/signalsmith/Makefile` fetches both pinned header-only libraries. `SGDJStretch.mm` applies pitch-preserving 0.94..1.06x tempo changes **off the render thread** to independently supplied B PCM before `SGDJTwoDeckFeedB`. It does not find/download/decrypt Spotify B. Both license notices ship in the optional DJ resource bundle. |
 
 The old archived DJ V2 pre-buffered both decks using **one sequential Spotify decoder queue**; it could not make the streaming subsystem produce Song B on demand and would fail when the native decoder had not delivered B's audio. That entire automatic path remains disabled.
 
@@ -17,10 +17,11 @@ The old archived DJ V2 pre-buffered both decks using **one sequential Spotify de
 
 - `Shared/DJMix/SGDJBeatPlan.{h,m}`: synthetic-envelope tempo detector as a fallback, beat/phrase-aware overlap planning and strict buffer, route and tempo checks.
 - `Shared/DJMix/SGDJTwoDeck.{h,m}`: thread-aware fixed-size staging buffers for separately provided stereo PCM, equal-power crossfade, no memory allocation on the render callback and no partial deck consumption on underrun.
+- `Shared/DJMix/SGDJStretch.{h,mm}`: actual MIT Signalsmith pitch-preserving incoming-deck preparation for slight BPM differences. Requires separately decoded B; the dual-deck mixer never invokes an FFT on the audio render thread.
 - `Shared/DJMix/SGDJBeatProbe.{h,x}`: **off by default**, samples outgoing audio without modifying it; off-thread fallback rhythmic analysis. When the optional model is bundled, it captures one bounded 32-second mono window and calls the actual BeatIt native Core ML downbeat tracker off the render thread. It stores recent per-track grids and emits `dj lab` diagnostics.
 - `Shared/DJMix/SGBeatItAnalyzer.{h,mm}`: actual open-source ML inference integration from our DJ archive. The model bundle can be located at the app root or Frameworks.
 - `tests/djmix/beat_plan_test.c`: deterministic no-Song-B, tempo, buffer capacity, underrun, track-guard and chunk-continuity coverage.
-- `.github/workflows/test-djmix.yml`: host tests with sanitizers, Sing output/dry-bypass regression tests, and real macOS iOS tweak build **with SG_DJ_BEATIT=1**.
+- `.github/workflows/test-djmix.yml`: host tests with sanitizers, Sing output/dry-bypass regression tests, and real macOS iOS tweak build **with SG_DJ_BEATIT=1 and SG_DJ_STRETCH=1**, plus an independent sine-wave pitch-retention test for Signalsmith.
 
 ## Dev IPA — building and enabling
 
@@ -31,7 +32,7 @@ The old archived DJ V2 pre-buffered both decks using **one sequential Spotify de
 4. After installing, Mod Settings → Player → **DJ Mix laboratory** → **Analyze beat grids (experimental)**, then restart. The lab is **off by default** even in a BeatIt-enabled IPA.
 5. Play a local song in the foreground for 35+ seconds, then Mod → Copy diagnostics. `dj lab: BeatIt Core ML tempo` confirms successful model inference; `dj lab: envelope tempo` indicates model unavailable/insufficient evidence. All logging avoids storing actual PCM in diagnostics.
 
-The audio monitor uses transient PCM captured from playback, not a separate copy of Spotify's track. The model cannot infer the future track without future audio. When the future track has previously been analyzed, only its beat metadata is cached, **not** its decoded audio.
+The audio monitor uses transient PCM captured from playback, not a separate copy of Spotify's track. A pitch-preserving B stretcher is available, but it only processes B frames when a future independent source is provided. The model cannot infer the future track without future audio. When the future track has previously been analyzed, only its beat metadata is cached, **not** its decoded audio.
 
 ## Live AutoMix blocker and next architectural test
 
