@@ -22,6 +22,9 @@ extern const CGFloat SGRHeaderInfoTitleRise;  // 56, of the content over the pic
 @interface SGRHeaderInfo : UIView
 // YES when anything shown changed. nil or empty hides that line.
 - (BOOL)showTitle:(NSString *)title creator:(NSString *)creator length:(NSString *)length about:(NSString *)about;
+// Artist pages may use an Apple Music transparent wordmark in place of the title.
+// Passing nil restores the ordinary accessible text, with no effect on album/playlist headers.
+- (void)showTitleLogo:(UIImage *)logo;
 // Spotify's own control behind the creator line -- the album's artist row, the playlist's collaborators
 // button -- so a tap on the line opens whoever made it, and several of them open Spotify's own picker.
 // The line keeps its colour: it is the page's one piece of secondary text, not a link to be tinted. nil
