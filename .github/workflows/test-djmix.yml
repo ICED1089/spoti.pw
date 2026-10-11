@@ -1,0 +1,32 @@
+name: Test independent DJ beat core
+
+on:
+  push:
+    branches: [dev/v0.23]
+    paths:
+      - 'tweak/Sources/Shared/DJMix/**'
+      - 'tests/djmix/**'
+      - '.github/workflows/test-djmix.yml'
+  workflow_dispatch:
+
+jobs:
+  host-djmix-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile pure C beat planner and independent two-stream mixer
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -O2 -x c \
+            tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tests/djmix/beat_plan_test.c \
+            -lm -o /tmp/djmix-test
+      - name: Test beat grids, PCM safety and no-second-stream failure
+        run: /tmp/djmix-test
+      - name: Run with sanitizers
+        run: |
+          clang -std=c11 -Wall -Wextra -O1 -g \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -x c \
+            tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tests/djmix/beat_plan_test.c \
+            -lm -o /tmp/djmix-sanitize
+          /tmp/djmix-sanitize
