@@ -9,6 +9,10 @@
 // the square one where there is none; otherwise only the square one.
 void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^done)(SGCanvas *canvas, NSString *note));
 
+// Optional artist wordmark lookup. Uses Apple Music's artist editorial artwork when offered; never
+// substitutes the ordinary square artist photograph. Main-thread callback; nil means keep the text title.
+void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSString *note));
+
 // The steps with no network in them.
 NSString *SGAppleTokenIn(NSString *script);
 NSDate *SGAppleTokenExpiry(NSString *token);
