@@ -22,9 +22,12 @@ This test build contains independently written code, not Chroma's patched binary
 1. On GitHub open **Actions → Build IPA from your own Spotify IPA**.
 2. Choose the **`dev/v0.23`** branch in the Run workflow selector.
 3. Paste a direct link to your own decrypted Spotify IPA into `ipa_url`; use **9.1.88** for the first test.
-4. Choose **artifacts** for `upload_method`; run the workflow.
-5. Download the resulting `spoti.ipa` artifact, install with your ordinary personal build workflow, and keep the previous working IPA as a rollback.
-6. Inspect the run logs. Compilation or patch errors require fixing before any device test; a GitHub commit alone is not proof of a working IPA.
+4. For an integration test with the personal Eevee 7 fork, enable **include_eevee** and leave **eevee_ref** at `Master`. For a clean spoti.pw-only baseline, leave the toggle off.
+5. Choose **artifacts** for `upload_method`; run the workflow.
+6. Download the resulting `spoti.dev.ipa` artifact (either spoti.pw-only or spoti.pw + Eevee 7), install with your ordinary personal build workflow, and keep the previous working IPA as a rollback.
+7. Inspect the run logs. Compilation or patch errors require fixing before any device test; a GitHub commit alone is not proof of a working IPA.
+
+**Do not run `ICED1089/EeveeSpotifyReincarnated` → `Build Chroma + Eevee` for this test.** That different workflow downloads an upstream Chroma release and does not build `dev/v0.23`.
 
 ## Device test sequence
 
