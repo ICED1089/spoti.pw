@@ -129,6 +129,15 @@ jobs:
         run: |
           gmake -C tweak clean package FINALPACKAGE=1 SG_DJ_BEATIT=1
           test -f vendor/beatit/build/SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json
+      - name: Validate actual Signalsmith time-stretch pitch and audio quality
+        run: |
+          clang++ -std=c++17 -O2 -Wall \
+            -Ivendor/signalsmith/build/stretch \
+            -Ivendor/signalsmith/build/linear/include \
+            -x c++ tweak/Sources/Shared/DJMix/SGDJStretch.mm \
+            tests/djmix/stretch_test.cpp \
+            -o /tmp/dj-stretch-test
+          /tmp/dj-stretch-test
       - name: Keep package and report
         uses: actions/upload-artifact@v4
         if: success()
