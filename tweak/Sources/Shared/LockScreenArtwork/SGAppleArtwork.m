@@ -346,8 +346,10 @@ static NSURL *artistLogoURL(id attributes) {
     NSString *template = [rendition isKindOfClass:NSDictionary.class] ? rendition[@"url"] :
                          [rendition isKindOfClass:NSString.class] ? rendition : nil;
     if (![template isKindOfClass:NSString.class] || !template.length) return nil;
-    NSString *address = [[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
-                          stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"];
+    NSString *address = [[[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
+                           stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"]
+                           stringByReplacingOccurrencesOfString:@"{f}" withString:@"png"];
+    if ([address containsString:@"{"] || [address containsString:@"}"]) return nil;
     NSURL *url = [NSURL URLWithString:address];
     // Accept only HTTPS artwork returned by the catalog; never load an arbitrary URL from a page.
     return [url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length ? url : nil;
