@@ -27,6 +27,11 @@ env:
 
 run-name: "Dev checks • ${{ github.ref_name }} • Sing ${{ inputs.verify_sing && 'on' || 'off' }}"
 
+# A series of dev commits should not launch overlapping costly macOS Core ML builds.
+concurrency:
+  group: dev-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   host-djmix-tests:
     runs-on: ubuntu-latest
