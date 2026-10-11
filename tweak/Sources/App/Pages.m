@@ -7,6 +7,7 @@
 #import "Shared/Lyrics/Lyrics.h"
 #import "Shared/LyricsMeanings/Meanings.h"
 #import "Shared/Player/PlayerSettings.h"
+#import "Shared/Player/SGNativeTransitions.h"
 #import "Native/Appearance/Appearance.h"
 #import "Native/Navbar/Navbar.h"
 #import "Native/NowPlayingBar/NowPlayingBar.h"
@@ -91,6 +92,10 @@ UIViewController *SGPlayerSettingsPage(void) {
     [pages addObject:SGWithSymbol(SGPageRow(@"Lock screen widget", ^UIViewController *{ return SGLockScreenWidgetPage(); }), @"lock")];
     [sections addObject:SGSection(nil, pages)];
     [sections addObjectsFromArray:native ? SGNativePlayerScreenSections() : SGRNowPlayingSections()];
+    [sections addObject:SGNotedSection(@"Transitions (experimental)", @[
+        SGWithSymbol(SGOptionRow(@"Synchronize native crossfade",
+            @"When you change the crossfade duration in Spotify's own playback settings, keep its crossfade switch in sync. Uses Spotify's existing engine; it does not unlock beat-matched AutoMix.", SGKeyNativeCrossfadeSync), @"arrow.triangle.2.circlepath"),
+    ], @"For testing on supported local playback only. Spotify Connect or a server-restricted playback context can ignore the setting. No custom two-deck mixing is installed.")];
     // Vibrations hook Spotify's own controls and its audio, so they answer under either look.
     [sections addObjectsFromArray:SGVibrationsSections()];
 
