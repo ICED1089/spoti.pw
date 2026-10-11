@@ -12,6 +12,9 @@
 #import "Headers/SPTPlayer.h"
 #import "SGDJBeatPlan.h"
 #import "SGDJBeatProbe.h"
+#if SG_DJ_BEATIT
+#import "SGBeatItAnalyzer.h"
+#endif
 
 enum { kEnvelopeHz = 100, kRing = 8192, kWindow = 5500 };
 static _Atomic(uint32_t) sg_onsets[kRing]; // float bits; atomic snapshots safe across wraparound
@@ -21,6 +24,14 @@ static atomic_bool sg_record, sg_formatGood;
 static atomic_flag sg_writer = ATOMIC_FLAG_INIT;
 static double sg_partialSquares; // only written under try-lock on audio callback
 static uint32_t sg_partialFrames, sg_seenEpoch;
+#if SG_DJ_BEATIT
+enum { kBeatThisSeconds = 32, kBeatThisMaximumFrames = 48000 * kBeatThisSeconds };
+// Capture on the render thread without allocation or locks. Once completed,
+// the buffer is immutable until the next track epoch.
+static float sg_beatThisPCM[kBeatThisMaximumFrames];
+static atomic_uint sg_beatThisFrames, sg_beatThisRate, sg_beatThisEpoch;
+static atomic_bool sg_beatThisComplete;
+#endif
 
 static void prepare(AudioUnit output) {
     AudioStreamBasicDescription format = {0};
@@ -34,6 +45,9 @@ static void prepare(AudioUnit output) {
               format.mChannelsPerFrame >= 1 && format.mChannelsPerFrame <= 2;
     atomic_store(&sg_captureHop, ok ? (uint32_t)lround(format.mSampleRate / kEnvelopeHz) : 0);
     atomic_store(&sg_formatGood, ok);
+#if SG_DJ_BEATIT
+    atomic_store(&sg_beatThisRate, ok ? (unsigned)lround(format.mSampleRate) : 0);
+#endif
 }
 static OSStatus observe(void *unused, AudioUnitRenderActionFlags *flags,
                         const AudioTimeStamp *timestamp, UInt32 bus,
@@ -51,6 +65,11 @@ static OSStatus observe(void *unused, AudioUnitRenderActionFlags *flags,
         sg_partialSquares = 0;
         sg_partialFrames = 0;
         atomic_store_explicit(&sg_written, 0, memory_order_release);
+#if SG_DJ_BEATIT
+        atomic_store_explicit(&sg_beatThisFrames, 0, memory_order_release);
+        atomic_store_explicit(&sg_beatThisComplete, false, memory_order_release);
+        atomic_store_explicit(&sg_beatThisEpoch, epoch, memory_order_release);
+#endif
     }
     unsigned hop = atomic_load_explicit(&sg_captureHop, memory_order_relaxed);
     const AudioBuffer *left = &data->mBuffers[0];
@@ -64,12 +83,22 @@ static OSStatus observe(void *unused, AudioUnitRenderActionFlags *flags,
                         frames <= UINT32_MAX / (2 * sizeof(float)) &&
                         left->mDataByteSize >= frames * 2 * sizeof(float);
     if (hop && left->mData && (planar ? right->mData != NULL : (mono || interleaved))) {
+#if SG_DJ_BEATIT
+        unsigned modelRate = atomic_load_explicit(&sg_beatThisRate, memory_order_relaxed);
+        unsigned modelLimit = modelRate * kBeatThisSeconds;
+        if (modelLimit > kBeatThisMaximumFrames) modelLimit = kBeatThisMaximumFrames;
+        unsigned modelCount = atomic_load_explicit(&sg_beatThisFrames, memory_order_relaxed);
+#endif
         const float *a = left->mData;
         const float *b = planar ? right->mData : NULL;
         for (UInt32 i = 0; i < frames; i++) {
             const float v = planar ? (a[i] + b[i]) * .5f :
                             interleaved ? (a[i*2] + a[i*2+1]) * .5f : a[i];
             if (isfinite(v)) sg_partialSquares += (double)v * v;
+#if SG_DJ_BEATIT
+            if (modelCount < modelLimit)
+                sg_beatThisPCM[modelCount++] = isfinite(v) ? v : 0.0f;
+#endif
             if (++sg_partialFrames == hop) {
                 float rms = (float)sqrt(sg_partialSquares / hop);
                 uint32_t bits;
@@ -81,6 +110,11 @@ static OSStatus observe(void *unused, AudioUnitRenderActionFlags *flags,
                 sg_partialSquares = 0;
             }
         }
+#if SG_DJ_BEATIT
+        atomic_store_explicit(&sg_beatThisFrames, modelCount, memory_order_release);
+        if (modelLimit && modelCount >= modelLimit)
+            atomic_store_explicit(&sg_beatThisComplete, true, memory_order_release);
+#endif
     }
     atomic_flag_clear_explicit(&sg_writer, memory_order_release);
     return noErr;
@@ -113,6 +147,9 @@ static SGDJBeatGrid gridFrom(id object) {
     uint64_t _lastAnalyzed;
     unsigned _activeEpoch;
     BOOL _analyzing, _capturing;
+#if SG_DJ_BEATIT
+    BOOL _modelAnalyzed;
+#endif
     NSMutableDictionary *_cache;
     NSTimer *_timer;
 }
@@ -134,6 +171,9 @@ static SGDJBeatGrid gridFrom(id object) {
         _current = [uri copy];
         _capturedAt = fmax(0, state.position);
         _lastAnalyzed = 0;
+#if SG_DJ_BEATIT
+        _modelAnalyzed = NO;
+#endif
         _activeEpoch = atomic_fetch_add_explicit(&sg_epoch, 1, memory_order_acq_rel) + 1;
         _lastPair = nil;
     }
@@ -152,6 +192,9 @@ static SGDJBeatGrid gridFrom(id object) {
         // reset so captured envelope seconds correspond to the actual Spotify clock.
         _capturedAt = fmax(0, state.position);
         _lastAnalyzed = 0;
+#if SG_DJ_BEATIT
+        _modelAnalyzed = NO;
+#endif
         _activeEpoch = atomic_fetch_add_explicit(&sg_epoch, 1, memory_order_acq_rel) + 1;
     }
     _capturing = enabled;
@@ -162,6 +205,20 @@ static SGDJBeatGrid gridFrom(id object) {
     uint64_t length = MIN((uint64_t)kWindow, produced);
     // The consumer copies a stable bounded window; ring entries are atomic,
     // and a changed track epoch invalidates results before publishing.
+#if SG_DJ_BEATIT
+    NSData *modelSnapshot = nil;
+    unsigned modelRate = atomic_load_explicit(&sg_beatThisRate, memory_order_acquire);
+    if (!_modelAnalyzed && modelRate &&
+        atomic_load_explicit(&sg_beatThisEpoch, memory_order_acquire) == _activeEpoch &&
+        atomic_load_explicit(&sg_beatThisComplete, memory_order_acquire)) {
+        unsigned modelFrames = atomic_load_explicit(&sg_beatThisFrames, memory_order_acquire);
+        if (modelFrames >= modelRate * 30 && modelFrames <= kBeatThisMaximumFrames) {
+            modelSnapshot = [NSData dataWithBytes:sg_beatThisPCM
+                                           length:(NSUInteger)modelFrames * sizeof(float)];
+            _modelAnalyzed = YES;
+        }
+    }
+#endif
     NSMutableData *bytes = [NSMutableData dataWithLength:(NSUInteger)length * sizeof(float)];
     float *values = bytes.mutableBytes;
     for (uint64_t i = 0; i < length; i++) {
@@ -172,12 +229,28 @@ static SGDJBeatGrid gridFrom(id object) {
     _lastAnalyzed = produced;
     NSString *uri = [_current copy], *next = [_next copy];
     unsigned epoch = _activeEpoch;
-    double origin = _capturedAt + (produced - length) / (double)kEnvelopeHz;
+    double capturedOrigin = _capturedAt;
+    double origin = capturedOrigin + (produced - length) / (double)kEnvelopeHz;
     __weak SGDJBeatObserver *weakSelf = self;
     NSData *snapshot = [bytes copy]; // retain the bytes until the utility worker is done
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         SGDJBeatGrid grid = SGDJBeatDetect(snapshot.bytes, (size_t)length, kEnvelopeHz);
-        if (grid.bpm > 0) grid.downbeatSeconds += origin;
+        BOOL usedNativeBeatIt = NO;
+#if SG_DJ_BEATIT
+        if (modelSnapshot.length && modelRate > 0) {
+            SGBeatItAnalysis analyzed = {0};
+            if (SGBeatItAnalyze(modelSnapshot.bytes,
+                                (uint32_t)(modelSnapshot.length / sizeof(float)),
+                                modelRate, &analyzed) && analyzed.hasDownbeats) {
+                grid.bpm = analyzed.bpm;
+                grid.confidence = analyzed.confidence;
+                grid.downbeatSeconds = analyzed.barPhase + capturedOrigin;
+                grid.beatsPerBar = 4;
+                usedNativeBeatIt = YES;
+            }
+        }
+#endif
+        if (grid.bpm > 0 && !usedNativeBeatIt) grid.downbeatSeconds += origin;
         dispatch_async(dispatch_get_main_queue(), ^{
             SGDJBeatObserver *self = weakSelf;
             if (!self) return;
@@ -198,7 +271,8 @@ static SGDJBeatGrid gridFrom(id object) {
                     [self->_cache removeObjectForKey:sorted[i]];
             }
             [NSUserDefaults.standardUserDefaults setObject:self->_cache forKey:@"spotifyglass.djmix.beats.v1"];
-            SGLog(@"dj lab: local tempo %.1f BPM confidence %.2f, next grid %@, PCM2 not available",
+            SGLog(@"dj lab: %@ tempo %.1f BPM confidence %.2f, next grid %@, PCM2 not available",
+                  usedNativeBeatIt ? @"BeatIt Core ML" : @"envelope",
                   grid.bpm, grid.confidence, self->_cache[hashURI(next)] ? @"cached" : @"unknown");
             NSString *pair = [NSString stringWithFormat:@"%@|%@", key, hashURI(next) ?: @""];
             if ([pair isEqualToString:self->_lastPair]) return;
