@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import <stdatomic.h>
 #import <math.h>
+#import <string.h>
 #import "Core/SGCore.h"
 #import "Shared/Audio/SGAudioPipeline.h"
 #import "Shared/Player/PlayerState.h"
