@@ -291,6 +291,8 @@ static void learnFrom(SGLyricsQuery *query, SGLyricsResult *result) {
 
 // Main queue only, except sg_missing and the credits.
 static NSMutableDictionary<NSString *, id> *sg_kept;
+// Main-queue recency, bounded to kKeptTracks: preserve hot lyric results when the cache fills.
+static NSMutableArray<NSString *> *sg_keptOrder;
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_waiting;
 static NSMutableSet<NSString *> *sg_missing;
 static NSMutableDictionary<NSString *, SGLyricsCredit *> *sg_credits, *sg_pageCredits;
@@ -303,6 +305,7 @@ static void setUp(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         sg_kept = [NSMutableDictionary dictionary];
+        sg_keptOrder = [NSMutableArray array];
         sg_waiting = [NSMutableDictionary dictionary];
         sg_missing = [NSMutableSet set];
         sg_credits = [NSMutableDictionary dictionary];
@@ -370,8 +373,14 @@ static void finish(SGLyricsWalk *walk) {
     BOOL everyoneAsked = !walk.passedOver.count;
     BOOL failed = atomic_load(&sg_failures) != walk.failuresAtStart;
     if (lyrics || (everyoneAsked && !failed) || merged.instrumental) {
-        if (sg_kept.count >= kKeptTracks) [sg_kept removeAllObjects];
         sg_kept[trackID] = lyrics ?: NSNull.null;
+        [sg_keptOrder removeObject:trackID];
+        [sg_keptOrder addObject:trackID];
+        while (sg_keptOrder.count > kKeptTracks) {
+            NSString *oldest = sg_keptOrder.firstObject;
+            [sg_keptOrder removeObjectAtIndex:0];
+            [sg_kept removeObjectForKey:oldest];
+        }
         if (!lyrics) {
             @synchronized (sg_missing) { [sg_missing addObject:trackID]; }
         }
@@ -479,6 +488,8 @@ void SGLyricsFetch(NSString *trackID, void (^done)(SGLyricsResult *result)) {
         }
         id kept = sg_kept[trackID];
         if (kept) {
+            [sg_keptOrder removeObject:trackID];
+            [sg_keptOrder addObject:trackID];
             done(kept == NSNull.null ? nil : kept);
             return;
         }
