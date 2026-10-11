@@ -112,7 +112,7 @@ static SGDJBeatGrid gridFrom(id object) {
     double _capturedAt;
     uint64_t _lastAnalyzed;
     unsigned _activeEpoch;
-    BOOL _analyzing;
+    BOOL _analyzing, _capturing;
     NSMutableDictionary *_cache;
     NSTimer *_timer;
 }
@@ -128,8 +128,8 @@ static SGDJBeatGrid gridFrom(id object) {
     NSString *uri = SGURIString(state.track.URI);
     NSString *upcoming = nil;
     id future = [state respondsToSelector:@selector(future)] ? state.future : nil;
-    if ([future isKindOfClass:NSArray.class] && [(NSArray *)future count])
-        upcoming = SGURIString([[(NSArray *)future firstObject] URI]);
+    id candidate = [future isKindOfClass:NSArray.class] ? [(NSArray *)future firstObject] : nil;
+    if ([candidate respondsToSelector:@selector(URI)]) upcoming = SGURIString([candidate URI]);
     if (![_current isEqualToString:uri]) {
         _current = [uri copy];
         _capturedAt = fmax(0, state.position);
@@ -147,6 +147,14 @@ static SGDJBeatGrid gridFrom(id object) {
         UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
         !NSProcessInfo.processInfo.lowPowerModeEnabled && state.isPlaying && !state.isPaused &&
         [_current hasPrefix:@"spotify:track:"];
+    if (enabled && !_capturing) {
+        // The initial tick may arrive seconds after the player named the track:
+        // reset so captured envelope seconds correspond to the actual Spotify clock.
+        _capturedAt = fmax(0, state.position);
+        _lastAnalyzed = 0;
+        _activeEpoch = atomic_fetch_add_explicit(&sg_epoch, 1, memory_order_acq_rel) + 1;
+    }
+    _capturing = enabled;
     atomic_store(&sg_record, enabled);
     if (!enabled || _analyzing || !atomic_load(&sg_formatGood)) return;
     uint64_t produced = atomic_load_explicit(&sg_written, memory_order_acquire);
@@ -166,8 +174,9 @@ static SGDJBeatGrid gridFrom(id object) {
     unsigned epoch = _activeEpoch;
     double origin = _capturedAt + (produced - length) / (double)kEnvelopeHz;
     __weak SGDJBeatObserver *weakSelf = self;
+    NSData *snapshot = [bytes copy]; // retain the bytes until the utility worker is done
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        SGDJBeatGrid grid = SGDJBeatDetect(values, (size_t)length, kEnvelopeHz);
+        SGDJBeatGrid grid = SGDJBeatDetect(snapshot.bytes, (size_t)length, kEnvelopeHz);
         if (grid.bpm > 0) grid.downbeatSeconds += origin;
         dispatch_async(dispatch_get_main_queue(), ^{
             SGDJBeatObserver *self = weakSelf;
@@ -209,6 +218,9 @@ static SGDJBeatGrid gridFrom(id object) {
 static SGDJBeatObserver *sg_observer;
 
 %ctor {
+    // No timer, audio tap or hot-path cost when the feature is off. Switching on
+    // requires a restart so the central audio pipeline installs our fixed slot.
+    if (!SGFlag(SGKeyDJBeatProbe, NO)) return;
     SGAudioPipelineRegister(SGAudioStageDJProbe, &sg_processor);
     dispatch_async(dispatch_get_main_queue(), ^{
         sg_observer = [SGDJBeatObserver new];
