@@ -326,3 +326,94 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
         });
     });
 }
+
+
+#pragma mark - artist wordmarks (not artist photographs)
+
+// Apple's artist catalog can include transparent text logos in editorialArtwork. The regular
+// "artwork" field is an artist portrait, and must not be mistaken for a name-shaped wordmark.
+// A missing or unrecognized field is a normal outcome: keep Spotify's accessible title.
+static NSMutableDictionary<NSString *, id> *sg_artistLogos;
+static NSMutableDictionary<NSString *, NSMutableArray *> *sg_artistLogoWaiters;
+
+static NSURL *artistLogoURL(id attributes) {
+    if (![attributes isKindOfClass:NSDictionary.class]) return nil;
+    id editorial = attributes[@"editorialArtwork"];
+    if (![editorial isKindOfClass:NSDictionary.class]) return nil;
+    id rendition = editorial[@"musicContentColorLogoTrimmed"];
+    NSString *template = [rendition isKindOfClass:NSDictionary.class] ? rendition[@"url"] :
+                         [rendition isKindOfClass:NSString.class] ? rendition : nil;
+    if (![template isKindOfClass:NSString.class] || !template.length) return nil;
+    NSString *address = [[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
+                          stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"];
+    NSURL *url = [NSURL URLWithString:address];
+    // Accept only HTTPS artwork returned by the catalog; never load an arbitrary URL from a page.
+    return [url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length ? url : nil;
+}
+
+static void searchArtistLogo(NSString *token, NSString *artist, BOOL retry,
+                             void (^done)(NSURL *logoURL, NSString *note)) {
+    if (!token) { done(nil, @"no Apple Music token"); return; }
+    NSURLComponents *components = [NSURLComponents componentsWithString:kSearch];
+    components.queryItems = @[
+        [NSURLQueryItem queryItemWithName:@"term" value:artist],
+        [NSURLQueryItem queryItemWithName:@"types" value:@"artists"],
+        [NSURLQueryItem queryItemWithName:@"limit" value:@"8"],
+        [NSURLQueryItem queryItemWithName:@"extend" value:@"editorialArtwork"],
+    ];
+    get(components.URL, token, ^(NSString *body, NSInteger status) {
+        if (status == 401 && retry) {
+            withToken(YES, ^(NSString *fresh) { searchArtistLogo(fresh, artist, NO, done); });
+            return;
+        }
+        if (status == 403 || status == 429) {
+            sg_quietUntil = CFAbsoluteTimeGetCurrent() + 600;
+            done(nil, [NSString stringWithFormat:@"Apple Music answered %ld", (long)status]);
+            return;
+        }
+        NSDictionary *response = status == 200
+            ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] ?: NSData.data
+                                               options:0 error:nil] : nil;
+        id artistResults = [response[@"results"] isKindOfClass:NSDictionary.class]
+            ? response[@"results"][@"artists"] : nil;
+        NSArray *matches = [artistResults isKindOfClass:NSDictionary.class] ? artistResults[@"data"] : nil;
+        NSURL *logo = nil;
+        if ([matches isKindOfClass:NSArray.class]) for (id item in matches) {
+            NSDictionary *attributes = [item isKindOfClass:NSDictionary.class] ? item[@"attributes"] : nil;
+            if (![attributes isKindOfClass:NSDictionary.class] ||
+                ![plain(attributes[@"name"]) isEqualToString:plain(artist)]) continue;
+            logo = artistLogoURL(attributes);
+            if (logo) break;
+        }
+        done(logo, logo ? @"Apple Music artist wordmark" :
+                        [NSString stringWithFormat:@"no matching artist wordmark (%ld)", (long)status]);
+    });
+}
+
+void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSString *note)) {
+    if (!done) return;
+    if (![artist isKindOfClass:NSString.class] || !artist.length) {
+        done(nil, @"no artist name");
+        return;
+    }
+    if (!sg_artistLogos) sg_artistLogos = [NSMutableDictionary dictionary];
+    NSString *key = plain(artist);
+    id cached = sg_artistLogos[key];
+    if (cached) { done(cached == NSNull.null ? nil : cached, @"cached artist logo"); return; }
+    if (CFAbsoluteTimeGetCurrent() < sg_quietUntil) { done(nil, @"Apple Music rate limit"); return; }
+    if (!sg_artistLogoWaiters) sg_artistLogoWaiters = [NSMutableDictionary dictionary];
+    NSMutableArray *waiting = sg_artistLogoWaiters[key];
+    if (waiting) { [waiting addObject:[done copy]]; return; }
+    sg_artistLogoWaiters[key] = [NSMutableArray arrayWithObject:[done copy]];
+    withToken(NO, ^(NSString *token) {
+        searchArtistLogo(token, artist, YES, ^(NSURL *url, NSString *note) {
+            if (url || [note hasPrefix:@"no matching artist wordmark (200)"]) {
+                if (sg_artistLogos.count >= 80) [sg_artistLogos removeAllObjects];
+                sg_artistLogos[key] = url ?: NSNull.null;
+            }
+            NSArray *callbacks = sg_artistLogoWaiters[key];
+            [sg_artistLogoWaiters removeObjectForKey:key];
+            for (void (^callback)(NSURL *, NSString *) in callbacks) callback(url, note);
+        });
+    });
+}
