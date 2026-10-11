@@ -25,6 +25,7 @@ on:
 
 env:
   THEOS: ${{ github.workspace }}/theos
+  SWIFTPROTOBUF_VERSION: "1.29.0"
 
 jobs:
   build:
@@ -71,6 +72,12 @@ jobs:
           ref: ${{ inputs.eevee_ref }}
           path: eevee
           submodules: recursive
+
+      - name: Set up Node for Eevee 7
+        if: ${{ inputs.include_eevee }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       - name: Install Eevee IPA injection tools
         if: ${{ inputs.include_eevee }}
@@ -125,6 +132,9 @@ jobs:
         run: |
           test -f "$FINAL_IPA"
           unzip -l "$FINAL_IPA" | grep -q spotifyglass.dylib
+          if ! unzip -l "$FINAL_IPA" | grep -q SpotifyGlassLiveActivity.appex; then
+            echo "::warning::Live Activity extension was not preserved"
+          fi
           ls -lh "$FINAL_IPA"
       - uses: actions/upload-artifact@v5
         if: inputs.upload_method != 'filebin'
