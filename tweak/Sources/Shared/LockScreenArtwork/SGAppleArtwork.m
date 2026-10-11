@@ -165,6 +165,19 @@ NSURL *SGAppleStreamFile(NSString *media, NSURL *base) {
 static NSString *sg_token;
 static NSMutableArray<void (^)(NSString *)> *sg_waiting;
 static NSMutableDictionary<NSString *, id> *sg_known;   // what each album gave this launch, NSNull for nothing
+static NSMutableArray<NSString *> *sg_knownOrder;       // 128 most recently used cover results
+static void rememberCover(NSString *key, id result) {
+    if (!sg_known) sg_known = [NSMutableDictionary dictionary];
+    if (!sg_knownOrder) sg_knownOrder = [NSMutableArray array];
+    sg_known[key] = result;
+    [sg_knownOrder removeObject:key];
+    [sg_knownOrder addObject:key];
+    while (sg_knownOrder.count > 128) {
+        NSString *oldest = sg_knownOrder.firstObject;
+        [sg_knownOrder removeObjectAtIndex:0];
+        [sg_known removeObjectForKey:oldest];
+    }
+}
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_asking;   // everyone waiting on each search in flight
 static CFAbsoluteTime sg_quietUntil;
 
@@ -277,7 +290,7 @@ static void search(NSString *token, NSString *artist, NSString *album, BOOL tall
         id albums = [results isKindOfClass:NSDictionary.class] ? results[@"albums"] : nil;
         NSURL *playlist = SGAppleCoverPlaylist([albums isKindOfClass:NSDictionary.class] ? albums[@"data"] : nil, artist, album, tall);
         if (!playlist) {
-            sg_known[known] = NSNull.null;
+            rememberCover(known, NSNull.null);
             done(nil, @"no animated cover");
             return;
         }
@@ -290,7 +303,7 @@ static void search(NSString *token, NSString *artist, NSString *album, BOOL tall
             canvas.identifier = [@"am-" stringByAppendingString:file.lastPathComponent.stringByDeletingPathExtension];
             canvas.address = file.absoluteString;
             canvas.video = YES;
-            sg_known[known] = canvas;
+            rememberCover(known, canvas);
             done(canvas, note);
         });
     });
@@ -305,6 +318,9 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
     NSString *known = [NSString stringWithFormat:@"%d\n%@\n%@", tall, plain(artist), plain(album)];
     id before = sg_known[known];
     if (before) {
+        // A hot album should survive when browsing a large collection.
+        [sg_knownOrder removeObject:known];
+        [sg_knownOrder addObject:known];
         done(before == NSNull.null ? nil : before, @"known from before");
         return;
     }
@@ -336,6 +352,7 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
 // "artwork" field is an artist portrait, and must not be mistaken for a name-shaped wordmark.
 // A missing or unrecognized field is a normal outcome: keep Spotify's accessible title.
 static NSMutableDictionary<NSString *, id> *sg_artistLogos;
+static NSMutableArray<NSString *> *sg_artistLogoOrder;
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_artistLogoWaiters;
 
 static NSURL *artistLogoURL(id attributes) {
@@ -401,9 +418,15 @@ void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSStri
         return;
     }
     if (!sg_artistLogos) sg_artistLogos = [NSMutableDictionary dictionary];
+    if (!sg_artistLogoOrder) sg_artistLogoOrder = [NSMutableArray array];
     NSString *key = plain(artist);
     id cached = sg_artistLogos[key];
-    if (cached) { done(cached == NSNull.null ? nil : cached, @"cached artist logo"); return; }
+    if (cached) {
+        [sg_artistLogoOrder removeObject:key];
+        [sg_artistLogoOrder addObject:key];
+        done(cached == NSNull.null ? nil : cached, @"cached artist logo");
+        return;
+    }
     if (CFAbsoluteTimeGetCurrent() < sg_quietUntil) { done(nil, @"Apple Music rate limit"); return; }
     if (!sg_artistLogoWaiters) sg_artistLogoWaiters = [NSMutableDictionary dictionary];
     NSMutableArray *waiting = sg_artistLogoWaiters[key];
@@ -412,8 +435,14 @@ void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSStri
     withToken(NO, ^(NSString *token) {
         searchArtistLogo(token, artist, YES, ^(NSURL *url, NSString *note) {
             if (url || [note hasPrefix:@"no matching artist wordmark (200)"]) {
-                if (sg_artistLogos.count >= 80) [sg_artistLogos removeAllObjects];
                 sg_artistLogos[key] = url ?: NSNull.null;
+                [sg_artistLogoOrder removeObject:key];
+                [sg_artistLogoOrder addObject:key];
+                while (sg_artistLogoOrder.count > 80) {
+                    NSString *oldest = sg_artistLogoOrder.firstObject;
+                    [sg_artistLogoOrder removeObjectAtIndex:0];
+                    [sg_artistLogos removeObjectForKey:oldest];
+                }
             }
             NSArray *callbacks = sg_artistLogoWaiters[key];
             [sg_artistLogoWaiters removeObjectForKey:key];
