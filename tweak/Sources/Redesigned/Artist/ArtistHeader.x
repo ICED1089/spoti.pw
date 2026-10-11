@@ -29,6 +29,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Artist.h"
+#import "Shared/LockScreenArtwork/SGAppleArtwork.h"
 
 // How much of the photo's height the dissolve into the field covers, and the scrim over the top of it that
 // keeps the status bar and the back button legible on a bright picture. The playlist's and the album's.
@@ -38,7 +39,7 @@ static const CGFloat kMinCover = 80, kMinHero = 120;
 // The collapsed ImageHeaderView, Spotify's navigation bar; the text fades out over the last kFade before it.
 static const CGFloat kBar = 100, kFade = 150;
 
-static char kInfoKey, kHeroKey, kHeroHeightKey, kContainerHeightKey, kRowWatchedKey;
+static char kInfoKey, kHeroKey, kHeroHeightKey, kContainerHeightKey, kRowWatchedKey, kLogoNameKey;
 static char kTitleKey, kMetaKey, kShuffleKey, kPlayKey, kFollowKey, kArtworkKey, kBarKey, kMoreKey, kMoreButtonKey;
 
 #pragma mark - Spotify's views
@@ -222,6 +223,59 @@ static void applyHero(UIView *container, UIView *artwork, CGFloat bottom) {
     [hero followArtwork:photoIn(artwork)];
 }
 
+
+// Optional Apple Music wordmarks. Only look up when the user enables the feature;
+// the familiar Spotify artist title always remains as the fallback.
+static NSCache<NSString *, UIImage *> *artistLogoImages(void) {
+    static NSCache<NSString *, UIImage *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [NSCache new];
+        cache.totalCostLimit = 16 * 1024 * 1024;
+        cache.countLimit = 16;
+    });
+    return cache;
+}
+
+static void showArtistLogo(SGRHeaderInfo *info, NSString *name) {
+    if (!SGFlag(@"spotifyglass.redesign.artistlogos", NO) || !name.length) {
+        [info showTitleLogo:nil];
+        return;
+    }
+    NSString *wanted = objc_getAssociatedObject(info, &kLogoNameKey);
+    if ([wanted isEqualToString:name]) return;
+    objc_setAssociatedObject(info, &kLogoNameKey, name, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    [info showTitleLogo:nil];
+
+    UIImage *cached = [artistLogoImages() objectForKey:name];
+    if (cached) { [info showTitleLogo:cached]; return; }
+    __weak SGRHeaderInfo *weakInfo = info;
+    SGAppleArtistLogoFind(name, ^(NSURL *url, NSString *note) {
+        if (!url) {
+            SGLog(@"redesign artist: no Apple Music logo for %@ (%@)", name, note);
+            return;
+        }
+        NSURLRequest *request = [NSURLRequest requestWithURL:url
+                cachePolicy:NSURLRequestReturnCacheDataElseLoad timeoutInterval:12];
+        [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class]
+                ? ((NSHTTPURLResponse *)response).statusCode : 0;
+            UIImage *image = !error && status == 200 && data.length && data.length <= 6 * 1024 * 1024
+                ? [UIImage imageWithData:data] : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (image) {
+                    NSUInteger cost = (NSUInteger)image.size.width * (NSUInteger)image.size.height * 4;
+                    [artistLogoImages() setObject:image forKey:name cost:cost];
+                }
+                SGRHeaderInfo *current = weakInfo;
+                if (!current || ![objc_getAssociatedObject(current, &kLogoNameKey) isEqualToString:name]) return;
+                if (image) [current showTitleLogo:image];
+                else SGLog(@"redesign artist: logo image unavailable for %@ (HTTP %ld)", name, (long)status);
+            });
+        }] resume];
+    });
+}
+
 #pragma mark - the header's pass
 
 static void applyHeader(UIView *header);
@@ -278,6 +332,7 @@ static void applyHeader(UIView *header) {
     UIView *listeners = SGRFindByIdentifier(header, @"Components.Header.UI.Metadata", &kMetaKey);
     NSString *name = firstText(title) ?: firstText(bar), *listening = firstText(listeners);
     [info showTitle:name creator:nil length:listening about:nil];
+    showArtistLogo(info, name);
 
     UIView *shuffle = SGRFindByIdentifier(header, @"Components.UI.ShuffleButton", &kShuffleKey);
     UIView *play = SGRFindByIdentifier(header, @"header-play-button", &kPlayKey);
