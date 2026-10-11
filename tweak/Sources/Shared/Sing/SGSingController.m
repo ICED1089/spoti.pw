@@ -171,7 +171,11 @@ static void workerStatus(void *context, int32_t status) {
     [self cancelWorker:session unload:unload];
     // A prepared, paused model may be attached to a stopped graph. There is no audio to
     // drain, and waiting for a render callback would make Off hang until the user pressed Play.
-    if (discard || !session.attached || (_state == SGSingReady && SGSingStreamQueued(stream(session)) == 0)) {
+    // Off while paused/interrupted must detach now: there is no render callback to
+    // advance the bypass drain, so keeping the old worker leaves an apparently stuck Sing.
+    BOOL noActiveAudio = notPlaying(SGPlayerState()) || _interrupted;
+    if (discard || noActiveAudio || !session.attached ||
+        (_state == SGSingReady && SGSingStreamQueued(stream(session)) == 0)) {
         SGSingAudioDetach(session.audio); session.attached = NO;
         if (!session.finished) [_retired addObject:session];
         _session = nil;
@@ -419,7 +423,7 @@ static void workerStatus(void *context, int32_t status) {
 - (void)setConfigured:(BOOL)configured {
     if (configured) { [self updateAvailability]; return; }
     _wanted = NO; _blockedTrack = nil; _waitingForCommand = NO;
-    [self stop:NO unload:YES];
+    [self stop:NO unload:YES]; // retain audible dry PCM when playing; drop immediately if paused
     [self publish:SGSingUnavailable explanation:nil];
 }
 // A seek or a skip replaces the running generation; Sing prepares the new position once it lands.
