@@ -409,7 +409,7 @@ static void fetch(SGCanvas *clip, BOOL again, void (^done)(NSURL *file, NSString
             // low-data, offline, authorization or missing-artwork failures spends data
             // without making another attempt any more likely to succeed.
             BOOL cancelled = [note.lowercaseString containsString:@"cancel"];
-            if (!file && !again && cancelled && stillWanted(sg_wanted)) fetch(clip, YES, done);
+            if (!file && !again && cancelled && sg_view.window && !heldBack()) fetch(clip, YES, done);
             else done(file, note);
         };
         if (NSThread.isMainThread) answer();
