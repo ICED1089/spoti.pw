@@ -372,7 +372,7 @@ static void searchArtistLogo(NSString *token, NSString *artist, BOOL retry,
             return;
         }
         NSDictionary *response = status == 200
-            ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] ?: NSData.data
+            ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data]
                                                options:0 error:nil] : nil;
         id artistResults = [response[@"results"] isKindOfClass:NSDictionary.class]
             ? response[@"results"][@"artists"] : nil;
