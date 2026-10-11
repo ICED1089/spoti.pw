@@ -742,15 +742,20 @@ static UIAction *singModeAction(SGRPlayerMenuTakeover *t) {
         pick(weak, ^(SGRPlayerMenuTakeover *strong) {
             BOOL enabled = !(SGFlag(SGRKeySing, NO) && SGSingEnabled());
             if (enabled) {
-                if (!SGFlag(SGRKeySing, NO)) {
-                    [NSUserDefaults.standardUserDefaults setBool:YES forKey:SGRKeySing];
-                    SGRSingApplySwitch();
-                }
+                // Re-enable the engine before requesting vocal reduction.
+                [NSUserDefaults.standardUserDefaults setBool:YES forKey:SGRKeySing];
+                SGRSingApplySwitch();
                 SGSingSetEnabled(YES);
             } else {
+                // Merely clearing 'wanted' left Sing configured and its retiring
+                // source processor active. Turn off the actual shared Sing engine
+                // and persist the setting, so reopening the menu/lyrics agrees.
                 SGSingSetEnabled(NO);
+                [NSUserDefaults.standardUserDefaults setBool:NO forKey:SGRKeySing];
+                SGRSingApplySwitch();
             }
-            SGLog(@"redesign player menu: Sing Mode %@", enabled ? @"on" : @"off");
+            SGLog(@"redesign player menu: Sing Mode %@ (configured %d, wanted %d)",
+                  enabled ? @"on" : @"off", SGFlag(SGRKeySing, NO), SGSingEnabled());
             finish(strong, [NSString stringWithFormat:@"Sing Mode turned %@", enabled ? @"on" : @"off"], nil);
         });
     }];
