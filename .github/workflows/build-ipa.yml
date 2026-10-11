@@ -9,9 +9,9 @@ on:
         required: true
         type: string
       include_beatit:
-        description: "Build MIT BeatIt Core ML rhythm/downbeat analysis (larger model, experimental)"
+        description: "Build MIT BeatIt Core ML rhythm/downbeat analysis (laboratory Off until enabled in app)"
         required: false
-        default: false
+        default: true
         type: boolean
       include_eevee:
         description: "Also build and inject Eevee 7 into the experimental spoti.pw IPA"
