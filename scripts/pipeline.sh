@@ -91,6 +91,16 @@ FILES=("$TWEAK_DEB")
 if [ "${SG_DJ_BEATIT:-0}" = "1" ]; then
   DJ_BUNDLE="$ROOT/vendor/beatit/build/SpotifyGlassDJ.bundle"
   [ -d "$DJ_BUNDLE" ] || { echo "::error::BeatIt bundle missing after native build" >&2; exit 1; }
+  # The opt-in source bundle must carry MIT copyright notices for each
+  # native dependency we have compiled into the dylib.
+  if [ "${SG_DJ_STRETCH:-1}" = "1" ]; then
+    for pair in "stretch Signalsmith-Stretch" "linear Signalsmith-Linear"; do
+      set -- $pair
+      src="$ROOT/vendor/signalsmith/build/$1/LICENSE.txt"
+      [ -f "$src" ] || { echo "::error::Missing $2 MIT notice" >&2; exit 1; }
+      cp "$src" "$DJ_BUNDLE/$2-LICENSE.txt"
+    done
+  fi
   FILES+=("$DJ_BUNDLE")
 fi
 [ "$WITH_FLEX" = 1 ] && FILES+=("$FLEX_DEB")
