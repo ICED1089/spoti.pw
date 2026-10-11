@@ -105,9 +105,9 @@ jobs:
           const SGFlagDef SGFlagTable[] = { {"test.stub", SGFlagUnknown, 0, 0, 0} };
           const NSUInteger SGFlagCount = 0;
           EOF
-      - name: Compile v0.23 tweak and experimental DJ code
+      - name: Compile v0.23 tweak with pinned open-source BeatIt Core ML
         run: |
-          gmake -C tweak clean package FINALPACKAGE=1
+          gmake -C tweak clean package FINALPACKAGE=1 SG_DJ_BEATIT=1
       - name: Keep package and report
         uses: actions/upload-artifact@v4
         if: success()
