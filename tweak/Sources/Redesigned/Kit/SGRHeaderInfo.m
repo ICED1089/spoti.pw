@@ -11,7 +11,7 @@ const CGFloat SGRHeaderInfoTitleRise = 56;
 
 // The text kSide in from the edges; Play at least kPlayWidth wide, the Music app's; the gaps between.
 static const CGFloat kSide = 20, kPlayWidth = 148, kRowSpacing = 16, kRowAbove = 16, kAboutAbove = 14;
-static const CGFloat kArtistLogoHeight = 72;
+static const CGFloat kArtistLogoHeight = 56;
 // The faces: Spotify's 24pt, overlap and 8pt gap, but no taller than the name's line, so none moves the title.
 static const CGFloat kFaceMax = 22, kFaceStep = 0.85, kFaceGap = 8, kFaceRing = 1.5;
 static const NSUInteger kFaceCap = 3;
