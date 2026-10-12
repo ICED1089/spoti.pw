@@ -226,17 +226,7 @@ static NSString *const kEeveeLyricsSource = @"lyricsSource";
 static const NSInteger kEeveeNotReplaced = 4;
 
 BOOL SGEeveeLoaded(void) {
-    static BOOL loaded;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        loaded = objc_getClass("_TtC12EeveeSpotify27EeveeSettingsViewController") != nil;
-        for (uint32_t i = 0, count = _dyld_image_count(); i < count && !loaded; i++) {
-            const char *path = _dyld_get_image_name(i);
-            const char *name = path ? strrchr(path, '/') : NULL;
-            loaded = name && strcasestr(name, "eevee");
-        }
-    });
-    return loaded;
+    return SGEeveePresent();
 }
 
 BOOL SGLyricsEeveeReplaces(void) {
@@ -291,7 +281,7 @@ static void learnFrom(SGLyricsQuery *query, SGLyricsResult *result) {
 
 // Main queue only, except sg_missing and the credits.
 static NSMutableDictionary<NSString *, id> *sg_kept;
-// Main-queue recency, bounded to kKeptTracks: preserve hot lyric results when the cache fills.
+// Bounded main-queue LRU; preserve the tested stable Eevee/lyrics availability paths.
 static NSMutableArray<NSString *> *sg_keptOrder;
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_waiting;
 static NSMutableSet<NSString *> *sg_missing;
