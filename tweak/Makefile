@@ -7,6 +7,9 @@ FINALPACKAGE := 1
 # loads, so it is set above the include.
 SG_VERSION := $(or $(shell cat ../version.txt 2>/dev/null),0.0.0)
 PACKAGE_VERSION := $(SG_VERSION)
+# Expose the real Git source revision in the installed app, not only the shared
+# 0.23.0-beta release version. Build cache must be keyed to this revision.
+SG_BUILD_COMMIT := $(shell git rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
 
 include $(THEOS)/makefiles/common.mk
 
@@ -25,7 +28,7 @@ endif
 ifeq ($(SG_DJ_STRETCH),1)
 spotifyglass_FILES += Sources/Shared/DJMix/SGDJStretch.mm
 endif
-spotifyglass_CFLAGS := -fobjc-arc -ISources -DSG_VERSION=\"$(SG_VERSION)\"
+spotifyglass_CFLAGS := -fobjc-arc -ISources -DSG_VERSION=\"$(SG_VERSION)\" -DSG_BUILD_COMMIT=\"$(SG_BUILD_COMMIT)\"
 spotifyglass_FRAMEWORKS := UIKit QuartzCore UniformTypeIdentifiers MediaPlayer CoreImage AudioToolbox AVFoundation CoreHaptics Accelerate Network Metal
 spotifyglass_CFLAGS += -DSG_DJ_BEATIT=$(SG_DJ_BEATIT)
 ifeq ($(SG_DJ_BEATIT),1)
