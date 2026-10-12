@@ -236,6 +236,18 @@ jobs:
             echo "::warning::Live Activity extension was not preserved"
           fi
           ls -lh "$FINAL_IPA"
+
+      - name: Report cache usage and source
+        if: always()
+        run: |
+          echo "### Build provenance and speed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Spotify flag table reused: ${{ steps.flag-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Compiled spoti.pw reused: ${{ steps.tweak-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Eevee build requested: ${{ inputs.include_eevee }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Eevee binaries reused: ${{ steps.eevee_cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Cold builds do not have a five-minute guarantee." >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v5
         if: inputs.upload_method != 'filebin'
         with:
