@@ -742,15 +742,18 @@ static UIAction *singModeAction(SGRPlayerMenuTakeover *t) {
         pick(weak, ^(SGRPlayerMenuTakeover *strong) {
             BOOL enabled = !(SGFlag(SGRKeySing, NO) && SGSingEnabled());
             if (enabled) {
-                if (!SGFlag(SGRKeySing, NO)) {
-                    [NSUserDefaults.standardUserDefaults setBool:YES forKey:SGRKeySing];
-                    SGRSingApplySwitch();
-                }
+                [NSUserDefaults.standardUserDefaults setBool:YES forKey:SGRKeySing];
+                SGRSingApplySwitch();
                 SGSingSetEnabled(YES);
             } else {
+                // Off means configured Off, not just 'wanted' Off. Keep
+                // menu, lyrics control, and shared DSP in agreement.
                 SGSingSetEnabled(NO);
+                [NSUserDefaults.standardUserDefaults setBool:NO forKey:SGRKeySing];
+                SGRSingApplySwitch();
             }
-            SGLog(@"redesign player menu: Sing Mode %@", enabled ? @"on" : @"off");
+            SGLog(@"redesign player menu: Sing Mode %@ (configured %d, wanted %d)",
+                  enabled ? @"on" : @"off", SGFlag(SGRKeySing, NO), SGSingEnabled());
             finish(strong, [NSString stringWithFormat:@"Sing Mode turned %@", enabled ? @"on" : @"off"], nil);
         });
     }];
