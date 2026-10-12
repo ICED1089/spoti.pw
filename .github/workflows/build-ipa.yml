@@ -39,6 +39,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Require current stable as dev ancestor
         if: github.ref_name == 'dev/v0.23'
         run: |
