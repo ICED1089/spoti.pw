@@ -83,6 +83,7 @@ UIViewController *SGAboutPage(void) {
     NSMutableArray<SGModSection *> *sections = [NSMutableArray arrayWithObject:SGSection(nil, @[
         updates,
         SGStatRow(@"Version", ^NSString *{ return @(SG_VERSION); }),
+        SGStatRow(@"Source commit", ^NSString *{ return @(SG_BUILD_COMMIT); }),
         SGStatRow(@"Spotify", ^NSString *{ return spotify; }),
     ])];
     SGModRow *appIcon = SGAppIconRow();
