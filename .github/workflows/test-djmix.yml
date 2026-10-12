@@ -12,6 +12,9 @@ on:
       - 'tweak/Sources/App/Pages.m'
       - 'tweak/Sources/Shared/Sing/**'
       - 'tweak/Sources/Redesigned/Player/PlayerMenu.x'
+      - 'tweak/Sources/Redesigned/Artist/**'
+      - 'tweak/Sources/Redesigned/Kit/SGRHeaderInfo.m'
+      - 'tweak/Sources/Shared/LockScreenArtwork/SGAppleArtwork.m'
       - 'tests/djmix/**'
       - '.github/workflows/test-djmix.yml'
   workflow_dispatch:
@@ -64,7 +67,7 @@ jobs:
           assert "[NSUserDefaults.standardUserDefaults setBool:NO forKey:SGRKeySing]" in off
           assert "SGSingSetEnabled(NO);" in off
           assert "SGRSingApplySwitch();" in off.split("SGSingSetEnabled(NO);", 1)[1]
-          assert "BOOL noActiveAudio = notPlaying(SGPlayerState()) || _interrupted;" in controller
+          assert "BOOL stoppedAudio = notPlaying(SGPlayerState()) || _interrupted;" in controller
           print("Sing 3-dot off control flow: PASS")
           PY
       - name: Run with sanitizers
