@@ -7,6 +7,8 @@
 #import "Shared/Lyrics/Lyrics.h"
 #import "Shared/LyricsMeanings/Meanings.h"
 #import "Shared/Player/PlayerSettings.h"
+#import "Shared/Audio/SGAudioPipeline.h"
+#import "Shared/DJMix/SGDJBeatProbe.h"
 #import "Native/Appearance/Appearance.h"
 #import "Native/Navbar/Navbar.h"
 #import "Native/NowPlayingBar/NowPlayingBar.h"
@@ -72,6 +74,28 @@ UIViewController *SGLyricsSettingsPage(void) {
     return [[SGModPage alloc] initWithTitle:@"Lyrics" intro:SGRestartNote sections:sections footer:nil];
 }
 
+// DJ Mix remains a passive analyzer until two independent Spotify PCM streams
+// are verified. No fake AutoMix switch, beatmatch badge, or implicit DSP hook.
+static UIViewController *SGDJMixSettingsPage(void) {
+    SGModRow *audio = SGStatRow(@"Spotify audio connection", ^NSString *{
+        return SGAudioPipelineAvailable() ? @"Available" : @"Unavailable";
+    });
+    SGModRow *live = SGStatRow(@"Live beat-matched transitions", ^NSString *{
+        return @"Not available";
+    });
+    SGModRow *probe = SGWithSymbol(SGOptionRow(@"Analyze current-track beats",
+        @"Use BeatIt Core ML for beat/downbeat analysis when included in this build. No audio mixing. Requires an app restart.",
+        SGKeyDJBeatProbe), @"waveform.path");
+    return [[SGModPage alloc] initWithTitle:@"DJ Mix"
+        intro:@"DJ Mix laboratory: analysis only. Live transitions are disabled until independent incoming-track audio is verified."
+        sections:@[
+            SGNotedSection(@"Playback readiness", @[audio, live],
+                @"If the audio connection is unavailable on this Spotify version, analysis will not run. The next track is not predecoded."),
+            SGNotedSection(@"Beat analysis", @[probe],
+                @"Off by default. Play for 35+ seconds in the foreground and open Mod → Copy diagnostics to view 'dj lab' logs.")
+        ] footer:nil];
+}
+
 UIViewController *SGPlayerSettingsPage(void) {
     SGModRow *blocked = SGPageRow(@"Blocked artists", ^UIViewController *{ return SGArtistBlockSettingsPage(); });
     blocked.value = ^NSString *{
@@ -82,6 +106,7 @@ UIViewController *SGPlayerSettingsPage(void) {
     NSMutableArray<SGModSection *> *sections = [NSMutableArray arrayWithObject:SGSection(nil, @[
         SGWithSymbol(SGPageRow(@"Gestures", ^UIViewController *{ return SGGesturesSettingsPage(); }), @"hand.tap"),
         SGWithSymbol(blocked, @"person.crop.circle.badge.xmark"),
+        SGWithSymbol(SGPageRow(@"DJ Mix (experimental)", ^UIViewController *{ return SGDJMixSettingsPage(); }), @"waveform.path"),
     ])];
     NSMutableArray<SGModRow *> *pages = [NSMutableArray array];
     if (native) {
