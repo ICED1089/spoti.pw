@@ -41,6 +41,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Record source revision
+        id: source
+        run: echo "short=$(git rev-parse --short=10 HEAD)" >> "$GITHUB_OUTPUT"
       - name: Require current stable as dev ancestor
         if: github.ref_name == 'dev/v0.23'
         run: |
@@ -100,7 +103,7 @@ jobs:
             tweak/packages
             vendor/beatit/build
             vendor/signalsmith/build
-          key: spoti-compiled-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.include_beatit }}-${{ hashFiles('ipa/spotify.ipa') }}-${{ hashFiles('tweak/Makefile', 'tweak/Sources/**', '!tweak/Sources/Shared/Flags/SGFlagList.m', 'vendor/beatit/Makefile', 'vendor/signalsmith/Makefile', 'scripts/*.sh', 'scripts/*.py', 'extension/**', 'plist/**', 'version.txt') }}
+          key: spoti-compiled-v5-${{ github.sha }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.include_beatit }}-${{ hashFiles('ipa/spotify.ipa') }}-${{ hashFiles('tweak/Makefile', 'tweak/Sources/**', '!tweak/Sources/Shared/Flags/SGFlagList.m', 'vendor/beatit/Makefile', 'vendor/signalsmith/Makefile', 'scripts/*.sh', 'scripts/*.py', 'extension/**', 'plist/**', 'version.txt') }}
 
       - name: Build and inject spoti.pw
         env:
@@ -121,7 +124,9 @@ jobs:
         run: |
           IPA="$(ls -t out/*.ipa | head -1)"
           test -f "$IPA"
-          echo "FINAL_IPA=$GITHUB_WORKSPACE/$IPA" >> "$GITHUB_ENV"
+          OUTPUT="out/Spotify-dev-${{ steps.source.outputs.short }}-Solo.ipa"
+          mv "$IPA" "$OUTPUT"
+          echo "FINAL_IPA=$GITHUB_WORKSPACE/$OUTPUT" >> "$GITHUB_ENV"
 
       - name: Checkout Eevee fork (optional)
         if: ${{ inputs.include_eevee }}
@@ -213,7 +218,7 @@ jobs:
           INJECT=("$DYLIB")
           if [ -n "$FRAMEWORK" ]; then INJECT+=("$FRAMEWORK"); fi
           if [ -n "$BUNDLE" ]; then INJECT+=("$BUNDLE"); fi
-          OUT="$GITHUB_WORKSPACE/out/Spotify-dev-v023-Eevee7.ipa"
+          OUT="$GITHUB_WORKSPACE/out/Spotify-dev-${{ steps.source.outputs.short }}-Eevee7.ipa"
           cyan -i "$FINAL_IPA" -o "$OUT" -f "${INJECT[@]}" -c 9 -m 15.0 -s --overwrite
           ipapatch --input "$OUT" --inplace --noconfirm --dylib "$GITHUB_WORKSPACE/eevee/packages/zxPluginsInject.dylib"
           unzip -l "$OUT" | grep -q EeveeSpotify.dylib
@@ -225,6 +230,53 @@ jobs:
         run: |
           test -f "$FINAL_IPA"
           unzip -l "$FINAL_IPA" | grep -q spotifyglass.dylib
+          DYLIB="$(unzip -Z1 "$FINAL_IPA" | grep -E '(^|/)spotifyglass[.]dylib
+            unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json' || {
+              echo "::error::BeatIt Core ML resources absent from IPA"
+              exit 1
+            }
+            echo "Pinned BeatIt Core ML resource found in dev IPA" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if ! unzip -l "$FINAL_IPA" | grep -q SpotifyGlassLiveActivity.appex; then
+            echo "::warning::Live Activity extension was not preserved"
+          fi
+          ls -lh "$FINAL_IPA"
+
+      - name: Report cache usage and source
+        if: always()
+        run: |
+          echo "### Build provenance and speed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Spotify flag table reused: ${{ steps.flag-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Compiled spoti.pw reused: ${{ steps.tweak-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Eevee build requested: ${{ inputs.include_eevee }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Eevee binaries reused: ${{ steps.eevee_cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Cold builds do not have a five-minute guarantee." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        if: inputs.upload_method != 'filebin'
+        with:
+          name: spoti-dev-${{ steps.source.outputs.short }}-${{ inputs.include_eevee && 'Eevee7' || 'Solo' }}
+          path: ${{ env.FINAL_IPA }}
+          if-no-files-found: error
+
+      - name: Upload to filebin.net
+        if: inputs.upload_method != 'artifacts'
+        run: |
+          BIN="spotifyglass-${{ github.run_id }}"
+          echo "### filebin.net download" >> "$GITHUB_STEP_SUMMARY"
+          for f in "$FINAL_IPA"; do
+            curl -fsS -X POST -H "Content-Type: application/octet-stream" --data-binary "@$f" "https://filebin.net/$BIN/$(basename "$f")" >/dev/null
+            echo "- https://filebin.net/$BIN/$(basename "$f")" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "- _filebin deletes bins after a few days of inactivity, download promptly._" >> "$GITHUB_STEP_SUMMARY"
+ | head -1)"
+          test -n "$DYLIB"
+          unzip -p "$FINAL_IPA" "$DYLIB" > "$RUNNER_TEMP/spotifyglass-provenance.dylib"
+          strings "$RUNNER_TEMP/spotifyglass-provenance.dylib" | grep -Fq "${{ steps.source.outputs.short }}" || {
+            echo "::error::IPA contains wrong/old source binary"
+            exit 1
+          }
           if [ "$SG_DJ_BEATIT" = "1" ]; then
             unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json' || {
               echo "::error::BeatIt Core ML resources absent from IPA"
