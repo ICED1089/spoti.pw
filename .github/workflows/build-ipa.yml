@@ -67,13 +67,55 @@ jobs:
           brew install make dpkg ldid
           python3 -m pip install --break-system-packages git+https://github.com/asdfzxcvbn/pyzule-rw.git
 
+      - name: Identify exact build toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          {
+            xcodebuild -version
+            git -C theos rev-parse HEAD
+          } | shasum -a 256 | cut -c1-20 | awk '{print "id="$1}' >> "$GITHUB_OUTPUT"
+
       - name: Download IPA
         run: |
           mkdir -p ipa
           curl -fsSL "${{ inputs.ipa_url }}" -o ipa/spotify.ipa
           case "$(file --mime-type -b ipa/spotify.ipa)" in application/zip|application/x-ios-app) ;; *) echo "::error::Not an IPA"; exit 1 ;; esac
 
-      - run: make release
+      # 3m12s was spent generating the remote flags in the original run.
+      # Cache by the SHA of the actual user-supplied decrypted IPA.
+      - name: Cache Spotify remote-config flag table
+        id: flag-cache
+        uses: actions/cache@v4
+        with:
+          path: tweak/Sources/Shared/Flags/SGFlagList.m
+          key: spoti-flags-v2-${{ hashFiles('scripts/extract-flags.py') }}-${{ hashFiles('ipa/spotify.ipa') }}
+
+      # Match source tree, SDK/toolchain, IPA content and DJ mode exactly.
+      - name: Restore compiled dev tweak and BeatIt resources
+        id: tweak-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            tweak/packages
+            vendor/beatit/build
+            vendor/signalsmith/build
+          key: spoti-compiled-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.include_beatit }}-${{ hashFiles('ipa/spotify.ipa') }}-${{ hashFiles('tweak/Makefile', 'tweak/Sources/**', '!tweak/Sources/Shared/Flags/SGFlagList.m', 'vendor/beatit/Makefile', 'vendor/signalsmith/Makefile', 'scripts/*.sh', 'scripts/*.py', 'extension/**', 'plist/**', 'version.txt') }}
+
+      - name: Build and inject spoti.pw
+        env:
+          SG_USE_CACHED_TWEAK: ${{ steps.tweak-cache.outputs.cache-hit == 'true' && '1' || '0' }}
+        run: make release
+
+      - name: Save compiled dev tweak for matching builds
+        if: steps.tweak-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            tweak/packages
+            vendor/beatit/build
+            vendor/signalsmith/build
+          key: ${{ steps.tweak-cache.outputs.cache-primary-key }}
 
       - name: Record mod-only IPA
         run: |
@@ -89,6 +131,22 @@ jobs:
           ref: ${{ inputs.eevee_ref }}
           path: eevee
           submodules: recursive
+
+      - name: Pin checked-out Eevee version
+        if: ${{ inputs.include_eevee }}
+        id: eevee_revision
+        run: echo "sha=$(git -C eevee rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Renamed SwiftProtobuf plus the Eevee package/shim cost 9m35s cold.
+      - name: Restore prebuilt Eevee and renamed SwiftProtobuf
+        if: ${{ inputs.include_eevee }}
+        id: eevee_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.THEOS }}/lib/iphone/rootless/EeveeSwiftProtobuf.framework
+            eevee/packages
+          key: eevee7-compiled-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ env.SWIFTPROTOBUF_VERSION }}-${{ steps.eevee_revision.outputs.sha }}
 
       - name: Set up Node for Eevee 7
         if: ${{ inputs.include_eevee }}
@@ -107,20 +165,38 @@ jobs:
           ipapatch --help >/dev/null
 
       - name: Build Eevee SwiftProtobuf
-        if: ${{ inputs.include_eevee }}
+        if: ${{ inputs.include_eevee && steps.eevee_cache.outputs.cache-hit != 'true' }}
         working-directory: eevee
         run: |
           chmod +x Tools/SwiftProtobufBuild/build-eeveeswiftprotobuf.sh
           Tools/SwiftProtobufBuild/build-eeveeswiftprotobuf.sh
 
       - name: Build Eevee rootless package and sideload shim
-        if: ${{ inputs.include_eevee }}
+        if: ${{ inputs.include_eevee && steps.eevee_cache.outputs.cache-hit != 'true' }}
         working-directory: eevee
         run: |
           THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1
           chmod +x Tools/build-zxpi.sh
           Tools/build-zxpi.sh
           test -f packages/zxPluginsInject.dylib
+
+      - name: Save compiled Eevee binaries for exact source revision
+        if: ${{ inputs.include_eevee && steps.eevee_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.THEOS }}/lib/iphone/rootless/EeveeSwiftProtobuf.framework
+            eevee/packages
+          key: ${{ steps.eevee_cache.outputs.cache-primary-key }}
+
+      - name: Verify cached Eevee binaries
+        if: ${{ inputs.include_eevee }}
+        shell: bash
+        run: |
+          test -d "$THEOS/lib/iphone/rootless/EeveeSwiftProtobuf.framework"
+          test -f eevee/packages/zxPluginsInject.dylib
+          find eevee/packages -maxdepth 1 -type f -name 'com.eevee.spotify_*.deb' | grep -q .
+          echo "Eevee cache SHA confirmed" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Inject Eevee into personal dev IPA
         if: ${{ inputs.include_eevee }}
