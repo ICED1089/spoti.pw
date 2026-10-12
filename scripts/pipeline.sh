@@ -81,8 +81,24 @@ if ! xcrun -sdk iphoneos --find clang >/dev/null 2>&1; then
          TARGET_STRIP=strip TARGET_LIPO=lipo TARGET_CODESIGN_ALLOCATE=codesign_allocate TARGET_LIBTOOL=libtool
 fi
 # Theos builds its Swift support tools only at MAKELEVEL 0, and `make release` hands this script MAKELEVEL 1.
-env -u MAKELEVEL gmake -C "$ROOT/tweak" clean package >/dev/null
-TWEAK_DEB="$(ls -t "$ROOT"/tweak/packages/*.deb | head -1)"
+if [ "${SG_USE_CACHED_TWEAK:-0}" = 1 ]; then
+  # Only the IPA action sets this after restoring a cache keyed on the
+  # exact source tree, toolchain, DJ build mode, and decrypted input IPA.
+  TWEAK_DEB="$(find "$ROOT/tweak/packages" -maxdepth 1 -name '*.deb' -type f -print 2>/dev/null | sort | head -1)"
+  [ -n "$TWEAK_DEB" ] && dpkg-deb --info "$TWEAK_DEB" >/dev/null || {
+    echo "::error::Invalid or absent source-keyed cached tweak package" >&2
+    exit 1
+  }
+  if [ "${SG_DJ_BEATIT:-0}" = 1 ]; then
+    test -f "$ROOT/vendor/beatit/build/SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json" || {
+      echo "::error::Cached DJ model missing" >&2; exit 1
+    }
+  fi
+  echo "==> reuse compiled tweak from exact-source GitHub Actions cache"
+else
+  env -u MAKELEVEL gmake -C "$ROOT/tweak" clean package >/dev/null
+  TWEAK_DEB="$(ls -t "$ROOT"/tweak/packages/*.deb | head -1)"
+fi
 echo "    $TWEAK_DEB"
 
 FILES=("$TWEAK_DEB")
