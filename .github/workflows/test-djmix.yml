@@ -1,0 +1,152 @@
+name: Dev checks — DJ Mix / optional Sing
+
+on:
+  push:
+    branches: [dev/v0.23]
+    paths:
+      - 'tweak/Sources/Shared/DJMix/**'
+      - 'tweak/Makefile'
+      - 'vendor/beatit/**'
+      - 'scripts/pipeline.sh'
+      - 'tweak/Sources/Shared/Audio/SGAudioPipeline.h'
+      - 'tweak/Sources/App/Pages.m'
+      - 'tweak/Sources/Shared/Sing/**'
+      - 'tweak/Sources/Redesigned/Player/PlayerMenu.x'
+      - 'tests/djmix/**'
+      - '.github/workflows/test-djmix.yml'
+  workflow_dispatch:
+    inputs:
+      verify_sing:
+        description: "Also test the published Sing model (larger macOS job)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+
+run-name: "Dev checks • ${{ github.ref_name }} • Sing ${{ inputs.verify_sing && 'on' || 'off' }}"
+
+# A series of dev commits should not launch overlapping costly macOS Core ML builds.
+concurrency:
+  group: dev-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-djmix-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check source import layering
+        run: bash scripts/check-layers.sh tweak/Sources
+      - name: Verify passive DJ probe is off by default
+        run: |
+          grep -q 'SGAudioStageDJProbe' tweak/Sources/Shared/Audio/SGAudioPipeline.h
+          grep -q 'SGKeyDJBeatProbe, NO' tweak/Sources/Shared/DJMix/SGDJBeatProbe.x
+      - name: Compile pure C beat planner and independent two-stream mixer
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -O2 -x c \
+            tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tweak/Sources/Shared/DJMix/SGDJTwoDeck.m \
+            tests/djmix/beat_plan_test.c \
+            -lm -o /tmp/djmix-test
+      - name: Test beat grids, PCM safety and no-second-stream failure
+        run: /tmp/djmix-test
+      - name: Test Sing off/dry bypass and source continuity (existing production audio harness)
+        run: python3 harness/sing/test.py
+      - name: Verify Sing Off menu persists configuration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          menu = Path("tweak/Sources/Redesigned/Player/PlayerMenu.x").read_text()
+          controller = Path("tweak/Sources/Shared/Sing/SGSingController.m").read_text()
+          off = menu.split("static UIAction *singModeAction", 1)[1].split("static UIMenu *menuFor", 1)[0]
+          assert "[NSUserDefaults.standardUserDefaults setBool:NO forKey:SGRKeySing]" in off
+          assert "SGSingSetEnabled(NO);" in off
+          assert "SGRSingApplySwitch();" in off.split("SGSingSetEnabled(NO);", 1)[1]
+          assert "BOOL noActiveAudio = notPlaying(SGPlayerState()) || _interrupted;" in controller
+          print("Sing 3-dot off control flow: PASS")
+          PY
+      - name: Run with sanitizers
+        run: |
+          clang -std=c11 -Wall -Wextra -O1 -g \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -x c \
+            tweak/Sources/Shared/DJMix/SGDJBeatPlan.m \
+            tweak/Sources/Shared/DJMix/SGDJTwoDeck.m \
+            tests/djmix/beat_plan_test.c \
+            -lm -o /tmp/djmix-sanitize
+          /tmp/djmix-sanitize
+
+
+  verify-sing-model:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_sing }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch published Sing model exactly as external files
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/ICED1089/spoti.pw/releases/download/sing-model-v0.23"
+          mkdir -p build/spoti-sing/weights build/spoti-sing/analytics
+          curl --fail --location --retry 3 "$BASE/weights-weight.bin" -o build/spoti-sing/weights/weight.bin
+          curl --fail --location --retry 3 "$BASE/model.mil" -o build/spoti-sing/model.mil
+          curl --fail --location --retry 3 "$BASE/metadata.json" -o build/spoti-sing/metadata.json
+          curl --fail --location --retry 3 "$BASE/coremldata.bin" -o build/spoti-sing/coremldata.bin
+          curl --fail --location --retry 3 "$BASE/analytics-coremldata.bin" -o build/spoti-sing/analytics/coremldata.bin
+
+      - name: Verify published hashes
+        run: |
+          echo "970a99fb4b15724bf76d2918ceb177df592c69265d3e2fabaab6e5ba72738e62  build/spoti-sing/weights/weight.bin" | shasum -a 256 -c -
+          echo "1a69afe6a22491a50b9c2b34342559f27b2847a55f05199f41202d73e96895ad  build/spoti-sing/model.mil" | shasum -a 256 -c -
+          echo "8eae0bb22d41cfd9f57018c02f017a548eaa9a57e75d80c94620454478d9c50f  build/spoti-sing/metadata.json" | shasum -a 256 -c -
+          echo "ad80c4acd630cb2972f47d558a979f524712951527189c61f2e31acff2ad9e53  build/spoti-sing/coremldata.bin" | shasum -a 256 -c -
+          echo "3c42ae03864bc59921fb7c404b248e77b41303adfcddf16d8f64c8dd3facdf26  build/spoti-sing/analytics/coremldata.bin" | shasum -a 256 -c -
+
+      - name: Run production downloader integration tests
+        run: python3 harness/sing/model_test.py build/spoti-sing
+
+  compile-dev-tweak:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/checkout@v5
+        with:
+          repository: theos/theos
+          path: theos
+          submodules: recursive
+      - name: Install build prerequisites
+        run: |
+          brew install make dpkg ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Generate build-only remote-config fixture
+        run: |
+          cat > tweak/Sources/Shared/Flags/SGFlagList.m <<'EOF'
+          #import "Flags.h"
+          const SGFlagDef SGFlagTable[] = { {"test.stub", SGFlagUnknown, 0, 0, 0} };
+          const NSUInteger SGFlagCount = 0;
+          EOF
+      - name: Compile v0.23 tweak with pinned open-source BeatIt Core ML
+        run: |
+          gmake -C tweak clean package FINALPACKAGE=1 SG_DJ_BEATIT=1
+          test -f vendor/beatit/build/SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json
+      - name: Validate actual Signalsmith time-stretch pitch and audio quality
+        run: |
+          clang++ -std=c++17 -O2 -Wall \
+            -Ivendor/signalsmith/build/stretch \
+            -Ivendor/signalsmith/build/linear/include \
+            -x c++ tweak/Sources/Shared/DJMix/SGDJStretch.mm \
+            tests/djmix/stretch_test.cpp \
+            -o /tmp/dj-stretch-test
+          /tmp/dj-stretch-test
+      - name: Keep package and report
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: dev-djmix-compile-check-only
+          path: tweak/packages/*.deb
+          if-no-files-found: error

@@ -47,5 +47,8 @@ NSArray<SGModRow *> *SGAnimatedArtworkRows(void) {
     return @[
         SGSwitchRow(@"Animated lock screen", @"A moving cover behind the lock screen's controls", SGKeyLockScreenArtwork),
         order,
+        SGSwitchRow(@"Download animated covers in Low Data Mode",
+            @"Off by default. Allow Apple Music and Spotify Canvas video downloads on constrained networks when explicitly enabled.",
+            SGKeyArtworkLowData),
     ];
 }

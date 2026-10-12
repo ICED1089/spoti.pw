@@ -25,5 +25,6 @@ static void chooseAccent(void) {
 NSArray<SGModRow *> *SGRAppearanceRows(void) {
     return @[
         SGWithSymbol(SGStatActionRow(@"Accent colour", nil, ^NSString *{ return SGRAccentLabel(); }, ^{ chooseAccent(); }), @"paintpalette"),
+        SGWithSymbol(SGOptionRow(@"Apple Music artist logos", @"Use an artist's transparent Apple Music wordmark where one is available; otherwise keep the artist name. Restart Spotify after changing.", @"spotifyglass.redesign.artistlogos"), @"textformat"),
     ];
 }

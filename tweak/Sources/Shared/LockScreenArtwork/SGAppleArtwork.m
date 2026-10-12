@@ -1,4 +1,5 @@
 #import "Core/SGCore.h"
+#import "LockScreenArtwork.h"
 #import "SGAppleArtwork.h"
 #import "SGCanvas.h"
 
@@ -164,13 +165,27 @@ NSURL *SGAppleStreamFile(NSString *media, NSURL *base) {
 static NSString *sg_token;
 static NSMutableArray<void (^)(NSString *)> *sg_waiting;
 static NSMutableDictionary<NSString *, id> *sg_known;   // what each album gave this launch, NSNull for nothing
+static NSMutableArray<NSString *> *sg_knownOrder;       // 128 most recently used cover results
+static void rememberCover(NSString *key, id result) {
+    if (!sg_known) sg_known = [NSMutableDictionary dictionary];
+    if (!sg_knownOrder) sg_knownOrder = [NSMutableArray array];
+    sg_known[key] = result;
+    [sg_knownOrder removeObject:key];
+    [sg_knownOrder addObject:key];
+    while (sg_knownOrder.count > 128) {
+        NSString *oldest = sg_knownOrder.firstObject;
+        [sg_knownOrder removeObjectAtIndex:0];
+        [sg_known removeObjectForKey:oldest];
+    }
+}
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_asking;   // everyone waiting on each search in flight
 static CFAbsoluteTime sg_quietUntil;
 
 // Every request goes out the way the web player's would; the answer lands on the main queue.
 static void get(NSURL *url, NSString *token, void (^done)(NSString *body, NSInteger status)) {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    request.allowsConstrainedNetworkAccess = NO;
+    // Explicit user choice; default remains no downloads on constrained networks.
+    request.allowsConstrainedNetworkAccess = SGFlag(SGKeyArtworkLowData, NO);
     [request setValue:kBrowser forHTTPHeaderField:@"User-Agent"];
     if (token) {
         [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
@@ -275,7 +290,7 @@ static void search(NSString *token, NSString *artist, NSString *album, BOOL tall
         id albums = [results isKindOfClass:NSDictionary.class] ? results[@"albums"] : nil;
         NSURL *playlist = SGAppleCoverPlaylist([albums isKindOfClass:NSDictionary.class] ? albums[@"data"] : nil, artist, album, tall);
         if (!playlist) {
-            sg_known[known] = NSNull.null;
+            rememberCover(known, NSNull.null);
             done(nil, @"no animated cover");
             return;
         }
@@ -288,7 +303,7 @@ static void search(NSString *token, NSString *artist, NSString *album, BOOL tall
             canvas.identifier = [@"am-" stringByAppendingString:file.lastPathComponent.stringByDeletingPathExtension];
             canvas.address = file.absoluteString;
             canvas.video = YES;
-            sg_known[known] = canvas;
+            rememberCover(known, canvas);
             done(canvas, note);
         });
     });
@@ -303,6 +318,9 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
     NSString *known = [NSString stringWithFormat:@"%d\n%@\n%@", tall, plain(artist), plain(album)];
     id before = sg_known[known];
     if (before) {
+        // A hot album should survive when browsing a large collection.
+        [sg_knownOrder removeObject:known];
+        [sg_knownOrder addObject:known];
         done(before == NSNull.null ? nil : before, @"known from before");
         return;
     }
@@ -323,6 +341,112 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
             NSArray *waiting = sg_asking[known];
             [sg_asking removeObjectForKey:known];
             for (void (^waiter)(SGCanvas *, NSString *) in waiting) waiter(canvas, note);
+        });
+    });
+}
+
+
+#pragma mark - artist wordmarks (not artist photographs)
+
+// Apple's artist catalog can include transparent text logos in editorialArtwork. The regular
+// "artwork" field is an artist portrait, and must not be mistaken for a name-shaped wordmark.
+// A missing or unrecognized field is a normal outcome: keep Spotify's accessible title.
+static NSMutableDictionary<NSString *, id> *sg_artistLogos;
+static NSMutableArray<NSString *> *sg_artistLogoOrder;
+static NSMutableDictionary<NSString *, NSMutableArray *> *sg_artistLogoWaiters;
+
+static NSURL *artistLogoURL(id attributes) {
+    if (![attributes isKindOfClass:NSDictionary.class]) return nil;
+    id editorial = attributes[@"editorialArtwork"];
+    if (![editorial isKindOfClass:NSDictionary.class]) return nil;
+    id rendition = editorial[@"musicContentColorLogoTrimmed"];
+    NSString *template = [rendition isKindOfClass:NSDictionary.class] ? rendition[@"url"] :
+                         [rendition isKindOfClass:NSString.class] ? rendition : nil;
+    if (![template isKindOfClass:NSString.class] || !template.length) return nil;
+    NSString *address = [[[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
+                           stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"]
+                           stringByReplacingOccurrencesOfString:@"{f}" withString:@"png"];
+    if ([address containsString:@"{"] || [address containsString:@"}"]) return nil;
+    NSURL *url = [NSURL URLWithString:address];
+    // Accept only HTTPS artwork returned by the catalog; never load an arbitrary URL from a page.
+    return [url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length ? url : nil;
+}
+
+static void searchArtistLogo(NSString *token, NSString *artist, BOOL retry,
+                             void (^done)(NSURL *logoURL, NSString *note)) {
+    if (!token) { done(nil, @"no Apple Music token"); return; }
+    NSURLComponents *components = [NSURLComponents componentsWithString:kSearch];
+    components.queryItems = @[
+        [NSURLQueryItem queryItemWithName:@"term" value:artist],
+        [NSURLQueryItem queryItemWithName:@"types" value:@"artists"],
+        [NSURLQueryItem queryItemWithName:@"limit" value:@"8"],
+        [NSURLQueryItem queryItemWithName:@"extend" value:@"editorialArtwork"],
+    ];
+    get(components.URL, token, ^(NSString *body, NSInteger status) {
+        if (status == 401 && retry) {
+            withToken(YES, ^(NSString *fresh) { searchArtistLogo(fresh, artist, NO, done); });
+            return;
+        }
+        if (status == 403 || status == 429) {
+            sg_quietUntil = CFAbsoluteTimeGetCurrent() + 600;
+            done(nil, [NSString stringWithFormat:@"Apple Music answered %ld", (long)status]);
+            return;
+        }
+        NSDictionary *response = status == 200
+            ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data]
+                                               options:0 error:nil] : nil;
+        id artistResults = [response[@"results"] isKindOfClass:NSDictionary.class]
+            ? response[@"results"][@"artists"] : nil;
+        NSArray *matches = [artistResults isKindOfClass:NSDictionary.class] ? artistResults[@"data"] : nil;
+        NSURL *logo = nil;
+        if ([matches isKindOfClass:NSArray.class]) for (id item in matches) {
+            NSDictionary *attributes = [item isKindOfClass:NSDictionary.class] ? item[@"attributes"] : nil;
+            if (![attributes isKindOfClass:NSDictionary.class] ||
+                ![plain(attributes[@"name"]) isEqualToString:plain(artist)]) continue;
+            logo = artistLogoURL(attributes);
+            if (logo) break;
+        }
+        done(logo, logo ? @"Apple Music artist wordmark" :
+                        [NSString stringWithFormat:@"no matching artist wordmark (%ld)", (long)status]);
+    });
+}
+
+void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSString *note)) {
+    if (!done) return;
+    if (![artist isKindOfClass:NSString.class] || !artist.length) {
+        done(nil, @"no artist name");
+        return;
+    }
+    if (!sg_artistLogos) sg_artistLogos = [NSMutableDictionary dictionary];
+    if (!sg_artistLogoOrder) sg_artistLogoOrder = [NSMutableArray array];
+    NSString *key = plain(artist);
+    id cached = sg_artistLogos[key];
+    if (cached) {
+        [sg_artistLogoOrder removeObject:key];
+        [sg_artistLogoOrder addObject:key];
+        done(cached == NSNull.null ? nil : cached, @"cached artist logo");
+        return;
+    }
+    if (CFAbsoluteTimeGetCurrent() < sg_quietUntil) { done(nil, @"Apple Music rate limit"); return; }
+    if (!sg_artistLogoWaiters) sg_artistLogoWaiters = [NSMutableDictionary dictionary];
+    NSMutableArray *waiting = sg_artistLogoWaiters[key];
+    if (waiting) { [waiting addObject:[done copy]]; return; }
+    sg_artistLogoWaiters[key] = [NSMutableArray arrayWithObject:[done copy]];
+    withToken(NO, ^(NSString *token) {
+        searchArtistLogo(token, artist, YES, ^(NSURL *url, NSString *note) {
+            if (url || [note hasPrefix:@"no matching artist wordmark (200)"]) {
+                sg_artistLogos[key] = url ?: NSNull.null;
+                [sg_artistLogoOrder removeObject:key];
+                [sg_artistLogoOrder addObject:key];
+                while (sg_artistLogoOrder.count > 80) {
+                    NSString *oldest = sg_artistLogoOrder.firstObject;
+                    [sg_artistLogoOrder removeObjectAtIndex:0];
+                    [sg_artistLogos removeObjectForKey:oldest];
+                }
+            }
+            NSArray *callbacks = sg_artistLogoWaiters[key];
+            [sg_artistLogoWaiters removeObjectForKey:key];
+            for (void (^callback)(NSURL *, NSString *) in callbacks) callback(url, note);
         });
     });
 }

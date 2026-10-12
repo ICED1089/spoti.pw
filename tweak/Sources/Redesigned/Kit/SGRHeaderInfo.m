@@ -11,6 +11,7 @@ const CGFloat SGRHeaderInfoTitleRise = 56;
 
 // The text kSide in from the edges; Play at least kPlayWidth wide, the Music app's; the gaps between.
 static const CGFloat kSide = 20, kPlayWidth = 148, kRowSpacing = 16, kRowAbove = 16, kAboutAbove = 14;
+static const CGFloat kArtistLogoHeight = 72;
 // The faces: Spotify's 24pt, overlap and 8pt gap, but no taller than the name's line, so none moves the title.
 static const CGFloat kFaceMax = 22, kFaceStep = 0.85, kFaceGap = 8, kFaceRing = 1.5;
 static const NSUInteger kFaceCap = 3;
@@ -70,6 +71,7 @@ static BOOL sameImages(NSArray<UIImage *> *a, NSArray<UIImage *> *b) {
 
 @implementation SGRHeaderInfo {
     UILabel *_title, *_creator, *_length, *_about;
+    UIImageView *_titleLogo;
     SGRMirrorButton *_shuffle, *_trailing;
     SGRPlayCapsule *_play;
     __weak UIView *_creatorLink;
@@ -87,6 +89,13 @@ static BOOL sameImages(NSArray<UIImage *> *a, NSArray<UIImage *> *b) {
     _title = infoLabel(self, SGRFont(UIFontTextStyleTitle2, UIFontWeightBold, UIContentSizeCategoryExtraLarge),
                        SGRPrimary(), 2, NSTextAlignmentCenter);
     _title.accessibilityTraits = UIAccessibilityTraitHeader;
+    _titleLogo = [UIImageView new];
+    _titleLogo.contentMode = UIViewContentModeScaleAspectFit;
+    _titleLogo.hidden = YES;
+    _titleLogo.isAccessibilityElement = YES;
+    _titleLogo.accessibilityTraits = UIAccessibilityTraitHeader;
+    _titleLogo.userInteractionEnabled = NO;
+    [self addSubview:_titleLogo];
     _creator = infoLabel(self, SGRFont(UIFontTextStyleBody, UIFontWeightRegular, UIContentSizeCategoryExtraLarge),
                          SGRSecondary(), 1, NSTextAlignmentCenter);
     _length = infoLabel(self, SGRFont(UIFontTextStyleFootnote, UIFontWeightRegular, UIContentSizeCategoryExtraLarge),
@@ -134,8 +143,19 @@ static BOOL sameImages(NSArray<UIImage *> *a, NSArray<UIImage *> *b) {
     changed |= setText(_creator, creator);
     changed |= setText(_length, length);
     changed |= setText(_about, about);
+    if (_titleLogo.image) _title.hidden = YES;
+    _titleLogo.accessibilityLabel = title;
     if (changed) [self setNeedsLayout];
     return changed;
+}
+
+- (void)showTitleLogo:(UIImage *)logo {
+    if (_titleLogo.image == logo) return;
+    _titleLogo.image = logo;
+    _titleLogo.hidden = logo == nil;
+    _title.hidden = logo != nil || !_title.text.length;
+    _titleLogo.accessibilityLabel = _title.text;
+    [self setNeedsLayout];
 }
 
 // The creator line, tappable where its name and faces are drawn -- a tap either side of a short name belongs
@@ -324,7 +344,8 @@ static BOOL sameImages(NSArray<UIImage *> *a, NSArray<UIImage *> *b) {
 
 - (CGFloat)contentHeightForWidth:(CGFloat)width {
     CGFloat text = MAX(0, width - 2 * kSide), height = 0;
-    UILabel *previous = nil;
+    UILabel *previous = _titleLogo.image ? _title : nil;
+    if (_titleLogo.image) height += kArtistLogoHeight;
     for (UILabel *label in @[_title, _creator, _length]) {
         if (label.hidden) continue;
         if (previous) height += previous == _creator ? 4 : 2;
@@ -342,7 +363,11 @@ static BOOL sameImages(NSArray<UIImage *> *a, NSArray<UIImage *> *b) {
     CGFloat width = self.bounds.size.width, text = MAX(0, width - 2 * kSide);
     CGFloat y = round(self.bounds.size.height - SGRHeaderInfoBottom - [self contentHeightForWidth:width]);
 
-    UILabel *previous = nil;
+    UILabel *previous = _titleLogo.image ? _title : nil;
+    if (_titleLogo.image) {
+        _titleLogo.frame = CGRectMake(kSide, y, text, kArtistLogoHeight);
+        y += kArtistLogoHeight;
+    }
     for (UILabel *label in @[_title, _creator, _length]) {
         if (label.hidden) continue;
         if (previous) y += previous == _creator ? 4 : 2;
