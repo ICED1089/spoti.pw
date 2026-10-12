@@ -39,6 +39,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Require current stable as dev ancestor
+        if: github.ref_name == 'dev/v0.23'
+        run: |
+          git fetch --no-tags origin stable/v0.23
+          git merge-base --is-ancestor origin/stable/v0.23 HEAD || {
+            echo "::error::Dev is behind stable. Sync dev onto current stable before building."
+            exit 1
+          }
 
       - uses: levibostian/action-hide-sensitive-inputs@v1
 
