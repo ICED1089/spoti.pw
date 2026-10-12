@@ -30,6 +30,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Artist.h"
 #import "Shared/LockScreenArtwork/SGAppleArtwork.h"
+#import "SGArtistLogoMatte.h"
 
 // How much of the photo's height the dissolve into the field covers, and the scrim over the top of it that
 // keeps the status bar and the back button legible on a bright picture. The playlist's and the album's.
@@ -261,7 +262,7 @@ static void showArtistLogo(SGRHeaderInfo *info, NSString *name) {
             NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class]
                 ? ((NSHTTPURLResponse *)response).statusCode : 0;
             UIImage *image = !error && status == 200 && data.length && data.length <= 6 * 1024 * 1024
-                ? [UIImage imageWithData:data] : nil;
+                ? SGArtistLogoMatte([UIImage imageWithData:data]) : nil;
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (image) {
                     NSUInteger cost = (NSUInteger)image.size.width * (NSUInteger)image.size.height * 4;
