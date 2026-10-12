@@ -14,4 +14,13 @@ To inspect the feature inside the app, visit **Mod → Player → DJ Mix (experi
 
 [Branch policy](BRANCH_POLICY.md) · [DJ engine implementation](DJ_MIX_IMPLEMENTATION.md)
 
+
+## Build performance: warm vs. cold
+
+The [October 12 Eevee+BeatIt run #38253786735](https://github.com/ICED1089/spoti.pw/actions/runs/38253786735) used **the archived old dev source** and ran about **19 minutes**. The logs show approximately **3m12s** extracting Spotify remote flags, **7m26s** for the complete spoti.pw build/injection, **1m54s** compiling renamed SwiftProtobuf, and **7m41s** compiling Eevee and its sideload shim. These are sequential and dominate wall time.
+
+The **current** stable-based `dev/v0.23` IPA workflow now maintains three exact-match caches: (1) flags per exact decrypted Spotify IPA + extractor version; (2) compiled tweak/dependencies per source, IPA, DJ mode and Theos/Xcode revision; (3) Eevee package, shim and renamed SwiftProtobuf per pinned Eevee commit and toolchain. On a warm cache it skips those compiled stages and continues with IPA injection/verification. **About five minutes is a warm-cache goal, not a cold-build guarantee**; every source or IPA change that invalidates a cache may still take substantially longer. A rerun of an **old run ID** uses its old commit and cannot benefit from the current workflow modifications.
+
+The default build **retains alternate app icon support** rather than silently dropping a feature to reduce build time. GitHub's runner provisioning, IPA download/injection and uploads still take unavoidable time.
+
 Historical dev-only workflows and outdated changes are archived at [archive/dev-v023-pre-stable-rebase-20261012](https://github.com/ICED1089/spoti.pw/tree/archive/dev-v023-pre-stable-rebase-20261012). They are not active on the clean dev branch.
