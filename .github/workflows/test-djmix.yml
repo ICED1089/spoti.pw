@@ -14,6 +14,7 @@ on:
       - 'tweak/Sources/Redesigned/Player/PlayerMenu.x'
       - 'tweak/Sources/Redesigned/Artist/**'
       - 'tweak/Sources/Redesigned/Kit/SGRHeaderInfo.m'
+      - 'tweak/Sources/Shared/LyricsSources/LyricsSources.m'
       - 'tweak/Sources/Shared/LockScreenArtwork/SGAppleArtwork.m'
       - 'tests/djmix/**'
       - '.github/workflows/test-djmix.yml'
@@ -40,6 +41,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Assert dev is based on current stable with tested audio core
+        run: |
+          git fetch --no-tags origin stable/v0.23
+          git merge-base --is-ancestor origin/stable/v0.23 HEAD
+          git diff --exit-code origin/stable/v0.23 -- \
+            tweak/Sources/Shared/Audio/SGAudioSourceQueue.m \
+            tweak/Sources/Shared/Audio/SGAudioPipeline.x
+          grep -q 'SGAudioPipelineFailureReason(void)' tweak/Sources/Shared/Audio/SGAudioPipeline.h
       - name: Check source import layering
         run: bash scripts/check-layers.sh tweak/Sources
       - name: Verify passive DJ probe is off by default
