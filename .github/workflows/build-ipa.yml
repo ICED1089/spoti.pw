@@ -230,51 +230,13 @@ jobs:
         run: |
           test -f "$FINAL_IPA"
           unzip -l "$FINAL_IPA" | grep -q spotifyglass.dylib
-          DYLIB="$(unzip -Z1 "$FINAL_IPA" | grep -E '(^|/)spotifyglass[.]dylib
-            unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json' || {
-              echo "::error::BeatIt Core ML resources absent from IPA"
-              exit 1
-            }
-            echo "Pinned BeatIt Core ML resource found in dev IPA" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if ! unzip -l "$FINAL_IPA" | grep -q SpotifyGlassLiveActivity.appex; then
-            echo "::warning::Live Activity extension was not preserved"
-          fi
-          ls -lh "$FINAL_IPA"
-
-      - name: Report cache usage and source
-        if: always()
-        run: |
-          echo "### Build provenance and speed" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Source commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Spotify flag table reused: ${{ steps.flag-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Compiled spoti.pw reused: ${{ steps.tweak-cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Eevee build requested: ${{ inputs.include_eevee }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Eevee binaries reused: ${{ steps.eevee_cache.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Cold builds do not have a five-minute guarantee." >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v5
-        if: inputs.upload_method != 'filebin'
-        with:
-          name: spoti-dev-${{ steps.source.outputs.short }}-${{ inputs.include_eevee && 'Eevee7' || 'Solo' }}
-          path: ${{ env.FINAL_IPA }}
-          if-no-files-found: error
-
-      - name: Upload to filebin.net
-        if: inputs.upload_method != 'artifacts'
-        run: |
-          BIN="spotifyglass-${{ github.run_id }}"
-          echo "### filebin.net download" >> "$GITHUB_STEP_SUMMARY"
-          for f in "$FINAL_IPA"; do
-            curl -fsS -X POST -H "Content-Type: application/octet-stream" --data-binary "@$f" "https://filebin.net/$BIN/$(basename "$f")" >/dev/null
-            echo "- https://filebin.net/$BIN/$(basename "$f")" >> "$GITHUB_STEP_SUMMARY"
-          done
-          echo "- _filebin deletes bins after a few days of inactivity, download promptly._" >> "$GITHUB_STEP_SUMMARY"
- | head -1)"
+          # Extract the embedded dylib by its exact IPA path; verify it was
+          # compiled from the SHA stamped into Mod -> About.
+          DYLIB="$(unzip -Z1 "$FINAL_IPA" | grep 'spotifyglass[.]dylib' | head -1)"
           test -n "$DYLIB"
           unzip -p "$FINAL_IPA" "$DYLIB" > "$RUNNER_TEMP/spotifyglass-provenance.dylib"
           strings "$RUNNER_TEMP/spotifyglass-provenance.dylib" | grep -Fq "${{ steps.source.outputs.short }}" || {
-            echo "::error::IPA contains wrong/old source binary"
+            echo "::error::IPA includes stale build source, refusing download artifact"
             exit 1
           }
           if [ "$SG_DJ_BEATIT" = "1" ]; then
@@ -303,7 +265,7 @@ jobs:
       - uses: actions/upload-artifact@v5
         if: inputs.upload_method != 'filebin'
         with:
-          name: spoti.dev.ipa
+          name: spoti-dev-${{ steps.source.outputs.short }}-${{ inputs.include_eevee && 'Eevee7' || 'Solo' }}
           path: ${{ env.FINAL_IPA }}
           if-no-files-found: error
 
