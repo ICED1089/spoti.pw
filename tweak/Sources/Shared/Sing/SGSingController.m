@@ -171,7 +171,11 @@ static void workerStatus(void *context, int32_t status) {
     [self cancelWorker:session unload:unload];
     // A prepared, paused model may be attached to a stopped graph. There is no audio to
     // drain, and waiting for a render callback would make Off hang until the user pressed Play.
-    if (discard || !session.attached || (_state == SGSingReady && SGSingStreamQueued(stream(session)) == 0)) {
+    // When paused/interrupted, no output callback is available to finish
+    // Sing's dry-audio drain. Detach the retired worker immediately.
+    BOOL stoppedAudio = notPlaying(SGPlayerState()) || _interrupted;
+    if (discard || stoppedAudio || !session.attached ||
+        (_state == SGSingReady && SGSingStreamQueued(stream(session)) == 0)) {
         SGSingAudioDetach(session.audio); session.attached = NO;
         if (!session.finished) [_retired addObject:session];
         _session = nil;
