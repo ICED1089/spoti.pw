@@ -107,13 +107,14 @@ NSString *SGDiagnosticsReport(void) {
         @"spoti.pw personal diagnostics\n"
          "Generated: %@\n"
          "Mod version: %@\n"
+         "Source commit: %@\n"
          "Spotify: %@ (%@)\n"
          "iOS: %@\n"
          "Device: %@\n"
          "UI mode: %@\n"
          "FLEX/debug build: %@\n"
          "Audio pipeline: %@%@\n\n",
-         [NSDate date], @(SG_VERSION), spotify, spotifyBuild, ios, device, mode,
+         [NSDate date], @(SG_VERSION), @(SG_BUILD_COMMIT), spotify, spotifyBuild, ios, device, mode,
          SGIsDebugBuild() ? @"yes" : @"no",
          SGAudioStatusAvailable() ? @"available" : @"unavailable",
          SGAudioStatusReason().length ? [NSString stringWithFormat:@" (%@)", SGAudioStatusReason()] : @""];
