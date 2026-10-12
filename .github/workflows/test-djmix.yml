@@ -12,6 +12,8 @@ on:
       - 'tweak/Sources/App/Pages.m'
       - 'tweak/Sources/Shared/Sing/**'
       - 'tweak/Sources/Redesigned/Player/PlayerMenu.x'
+      - 'tweak/Sources/App/About/AboutSettings.m'
+      - 'tweak/Sources/Diagnostics/Diagnostics.x'
       - 'tweak/Sources/Redesigned/Artist/**'
       - 'tweak/Sources/Redesigned/Kit/SGRHeaderInfo.m'
       - 'tweak/Sources/Shared/LyricsSources/LyricsSources.m'
@@ -51,6 +53,11 @@ jobs:
             tweak/Sources/Shared/Audio/SGAudioSourceQueue.m \
             tweak/Sources/Shared/Audio/SGAudioPipeline.x
           grep -q 'SGAudioPipelineFailureReason(void)' tweak/Sources/Shared/Audio/SGAudioPipeline.h
+      - name: Verify build source identity remains visible
+        run: |
+          grep -q 'SG_BUILD_COMMIT := ' tweak/Makefile
+          grep -q 'SGStatRow(@"Source commit"' tweak/Sources/App/About/AboutSettings.m
+          grep -q 'Source commit: ' tweak/Sources/Diagnostics/Diagnostics.x
       - name: Check source import layering
         run: bash scripts/check-layers.sh tweak/Sources
       - name: Verify passive DJ probe is off by default
