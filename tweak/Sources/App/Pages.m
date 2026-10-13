@@ -77,8 +77,19 @@ UIViewController *SGLyricsSettingsPage(void) {
 // DJ Mix remains a passive analyzer until two independent Spotify PCM streams
 // are verified. No fake AutoMix switch, beatmatch badge, or implicit DSP hook.
 static UIViewController *SGDJMixSettingsPage(void) {
-    SGModRow *audio = SGStatRow(@"Spotify audio connection", ^NSString *{
-        return SGAudioPipelineAvailable() ? @"Available" : @"Unavailable";
+    // A rebound AudioUnit import is not evidence of a verified decoder PCM stream.
+    SGModRow *audio = SGStatRow(@"Spotify output hook", ^NSString *{
+        return SGAudioPipelineAvailable() ? @"Installed" : @"Unavailable";
+    });
+    SGModRow *source = SGStatRow(@"Verified source PCM", ^NSString *{
+        return SGAudioPipelineTapped() ? @"Attached" : @"Not verified";
+    });
+    SGModRow *backend = SGStatRow(@"BeatIt Core ML backend", ^NSString *{
+#if SG_DJ_BEATIT
+        return @"Included in IPA";
+#else
+        return @"Not included";
+#endif
     });
     SGModRow *live = SGStatRow(@"Live beat-matched transitions", ^NSString *{
         return @"Not available";
@@ -89,8 +100,8 @@ static UIViewController *SGDJMixSettingsPage(void) {
     return [[SGModPage alloc] initWithTitle:@"DJ Mix"
         intro:@"DJ Mix laboratory: analysis only. Live transitions are disabled until independent incoming-track audio is verified."
         sections:@[
-            SGNotedSection(@"Playback readiness", @[audio, live],
-                @"If the audio connection is unavailable on this Spotify version, analysis will not run. The next track is not predecoded."),
+            SGNotedSection(@"Playback readiness", @[audio, source, backend, live],
+                @"An installed hook does not prove audio capture. Unverified Spotify versions may never attach a source PCM stream. The next track is not predecoded."),
             SGNotedSection(@"Beat analysis", @[probe],
                 @"Off by default. Play for 35+ seconds in the foreground and open Mod → Copy diagnostics to view 'dj lab' logs.")
         ] footer:nil];
