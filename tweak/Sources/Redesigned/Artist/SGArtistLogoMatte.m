@@ -45,20 +45,31 @@ UIImage *SGArtistLogoMatte(UIImage *source) {
             if (hi - lo > 28) ++colored;
         }
     }
-    if (!foreground || colored * 20 > foreground) {
+    if (!foreground) {
         CGContextRelease(context);
         return nil;
     }
+    const BOOL coloredInk = colored * 20 > foreground;
 
-    // Convert opaque gray ink to premultiplied near-white pixels. This removes
-    // the white card and respects the font's antialiased edge opacity.
+    // Keep Apple's genuine coloured logo rather than silently repainting it white.
+    // For a logo flattened onto white, recover premultiplied ink by removing the
+    // white matte. A grey monochrome logo retains the old high-contrast white mask.
     for (size_t n = 0; n < width * height; ++n) {
         uint8_t *p = pixels + n * 4;
-        unsigned lum = (54 * p[0] + 183 * p[1] + 19 * p[2]) / 256;
-        unsigned ink = lum >= 245 ? 0 : (245 - lum) * 255 / 55;
-        if (ink > 255) ink = 255;
-        p[3] = (uint8_t)ink;
-        p[0] = p[1] = p[2] = (uint8_t)((245 * ink + 127) / 255);
+        if (coloredInk) {
+            unsigned background = MIN(p[0], MIN(p[1], p[2]));
+            unsigned ink = 255 - background;
+            p[3] = (uint8_t)ink;
+            p[0] = (uint8_t)(p[0] - background);
+            p[1] = (uint8_t)(p[1] - background);
+            p[2] = (uint8_t)(p[2] - background);
+        } else {
+            unsigned lum = (54 * p[0] + 183 * p[1] + 19 * p[2]) / 256;
+            unsigned ink = lum >= 245 ? 0 : (245 - lum) * 255 / 55;
+            if (ink > 255) ink = 255;
+            p[3] = (uint8_t)ink;
+            p[0] = p[1] = p[2] = (uint8_t)((245 * ink + 127) / 255);
+        }
     }
     CGImageRef masked = CGBitmapContextCreateImage(context);
     CGContextRelease(context);
