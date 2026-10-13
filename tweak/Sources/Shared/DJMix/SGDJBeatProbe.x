@@ -199,6 +199,15 @@ static SGDJBeatGrid gridFrom(id object) {
     }
     _capturing = enabled;
     atomic_store(&sg_record, enabled);
+    if (enabled && !atomic_load(&sg_formatGood)) {
+        // This runs on the UI timer, never on the audio callback.
+        static CFAbsoluteTime lastNotice;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - lastNotice > 20) {
+            lastNotice = now;
+            SGLog(@"dj lab: enabled but no supported current-track PCM format observed yet; no beat analysis");
+        }
+    }
     if (!enabled || _analyzing || !atomic_load(&sg_formatGood)) return;
     uint64_t produced = atomic_load_explicit(&sg_written, memory_order_acquire);
     if (produced < 18 * kEnvelopeHz || produced < _lastAnalyzed + 500) return;
@@ -295,7 +304,14 @@ static SGDJBeatObserver *sg_observer;
     // No timer, audio tap or hot-path cost when the feature is off. Switching on
     // requires a restart so the central audio pipeline installs our fixed slot.
     if (!SGFlag(SGKeyDJBeatProbe, NO)) return;
-    SGAudioPipelineRegister(SGAudioStageDJProbe, &sg_processor);
+    BOOL hooked = SGAudioPipelineRegister(SGAudioStageDJProbe, &sg_processor);
+#if SG_DJ_BEATIT
+    SGLog(@"dj lab: probe enabled on restart, audio hook %@; BeatIt compiled in",
+          hooked ? @"installed" : @"unavailable");
+#else
+    SGLog(@"dj lab: probe enabled on restart, audio hook %@; envelope-only build (BeatIt not included)",
+          hooked ? @"installed" : @"unavailable");
+#endif
     dispatch_async(dispatch_get_main_queue(), ^{
         sg_observer = [SGDJBeatObserver new];
         SGAddPlayerStateObserver(sg_observer);
