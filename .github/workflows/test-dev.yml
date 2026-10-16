@@ -1,0 +1,73 @@
+name: Dev checks — artist logos and stable audio
+on:
+  push:
+    branches: [dev/v0.23]
+    paths:
+      - 'tweak/**'
+      - 'scripts/**'
+      - '.github/workflows/test-dev.yml'
+      - '.github/workflows/build-ipa.yml'
+  workflow_dispatch:
+env:
+  THEOS: ${{ github.workspace }}/theos
+concurrency:
+  group: dev-checks-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Confirm stable base and preserve tested audio
+        run: |
+          git fetch --no-tags origin stable/v0.23
+          git merge-base --is-ancestor origin/stable/v0.23 HEAD
+          git diff --exit-code origin/stable/v0.23 -- \
+            tweak/Sources/Shared/Audio/SGAudioSourceQueue.m \
+            tweak/Sources/Shared/Audio/SGAudioPipeline.x
+      - name: Ensure DJ components are absent
+        run: |
+          test ! -e tweak/Sources/Shared/DJMix
+          test ! -e vendor/beatit
+          test ! -e vendor/signalsmith
+          test ! -e tests/djmix
+          ! grep -Eiq 'SG_DJ_BEATIT|include_beatit|SGDJBeatProbe' \
+            tweak/Makefile tweak/Sources/App/Pages.m scripts/pipeline.sh .github/workflows/build-ipa.yml
+      - name: Verify artist logo path and diagnostics
+        run: |
+          grep -q 'Apple Music artist logos' tweak/Sources/Redesigned/Kit/SGRAppearanceSettings.m
+          grep -q 'SGAppleArtistLogoFind' tweak/Sources/Redesigned/Artist/ArtistHeader.x
+          grep -q 'SGArtistLogoMatte' tweak/Sources/Redesigned/Artist/SGArtistLogoMatte.m
+          grep -q 'SG_BUILD_COMMIT := ' tweak/Makefile
+          grep -q 'Source commit: ' tweak/Sources/Diagnostics/Diagnostics.x
+      - name: Check source import layering
+        run: bash scripts/check-layers.sh tweak/Sources
+      - name: Sing audio regression harness
+        run: python3 harness/sing/test.py
+  compile:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/checkout@v5
+        with:
+          repository: theos/theos
+          path: theos
+          submodules: recursive
+      - name: Setup
+        run: |
+          brew install make dpkg ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Compile-only Spotify flags
+        run: |
+          cat > tweak/Sources/Shared/Flags/SGFlagList.m <<'EOF'
+          #import "Flags.h"
+          const SGFlagDef SGFlagTable[] = { {"test.stub", SGFlagUnknown, 0, 0, 0} };
+          const NSUInteger SGFlagCount = 0;
+          EOF
+      - name: Compile v0.23 without DJ
+        run: gmake -C tweak clean package FINALPACKAGE=1

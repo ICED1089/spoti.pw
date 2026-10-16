@@ -10,7 +10,6 @@ typedef enum {
     SGAudioStageSpeedPitch,
     SGAudioStageEffects,
     SGAudioStageHaptics,
-    SGAudioStageDJProbe, // passive observer only; no changes to Spotify PCM
     SGAudioStageCount
 } SGAudioStage;
 

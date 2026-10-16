@@ -1,5 +1,5 @@
 name: Build IPA — personal fork / optional Eevee
-run-name: "IPA ${{ github.ref_name }} • Eevee ${{ inputs.include_eevee && 'on' || 'off' }} • BeatIt ${{ inputs.include_beatit && 'on' || 'off' }}"
+run-name: "IPA ${{ github.ref_name }} • Eevee ${{ inputs.include_eevee && 'on' || 'off' }}"
 
 on:
   workflow_dispatch:
@@ -8,11 +8,6 @@ on:
         description: "Direct link to a decrypted Spotify IPA"
         required: true
         type: string
-      include_beatit:
-        description: "Build MIT BeatIt Core ML rhythm/downbeat analysis (laboratory Off until enabled in app)"
-        required: false
-        default: true
-        type: boolean
       include_eevee:
         description: "Also build and inject Eevee 7 into the experimental spoti.pw IPA"
         required: false
@@ -32,7 +27,6 @@ on:
 env:
   THEOS: ${{ github.workspace }}/theos
   SWIFTPROTOBUF_VERSION: "1.29.0"
-  SG_DJ_BEATIT: ${{ inputs.include_beatit && '1' || '0' }}
 
 jobs:
   build:
@@ -94,16 +88,14 @@ jobs:
           path: tweak/Sources/Shared/Flags/SGFlagList.m
           key: spoti-flags-v2-${{ hashFiles('scripts/extract-flags.py') }}-${{ hashFiles('ipa/spotify.ipa') }}
 
-      # Match source tree, SDK/toolchain, IPA content and DJ mode exactly.
-      - name: Restore compiled dev tweak and BeatIt resources
+      # Match source tree, SDK/toolchain, IPA content exactly.
+      - name: Restore compiled dev tweak
         id: tweak-cache
         uses: actions/cache/restore@v4
         with:
           path: |
             tweak/packages
-            vendor/beatit/build
-            vendor/signalsmith/build
-          key: spoti-compiled-v5-${{ github.sha }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ inputs.include_beatit }}-${{ hashFiles('ipa/spotify.ipa') }}-${{ hashFiles('tweak/Makefile', 'tweak/Sources/**', '!tweak/Sources/Shared/Flags/SGFlagList.m', 'vendor/beatit/Makefile', 'vendor/signalsmith/Makefile', 'scripts/*.sh', 'scripts/*.py', 'extension/**', 'plist/**', 'version.txt') }}
+          key: spoti-compiled-v6-${{ github.sha }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('ipa/spotify.ipa') }}-${{ hashFiles('tweak/Makefile', 'tweak/Sources/**', '!tweak/Sources/Shared/Flags/SGFlagList.m', 'scripts/*.sh', 'scripts/*.py', 'extension/**', 'plist/**', 'version.txt') }}
 
       - name: Build and inject spoti.pw
         env:
@@ -116,8 +108,6 @@ jobs:
         with:
           path: |
             tweak/packages
-            vendor/beatit/build
-            vendor/signalsmith/build
           key: ${{ steps.tweak-cache.outputs.cache-primary-key }}
 
       - name: Record mod-only IPA
@@ -239,13 +229,6 @@ jobs:
             echo "::error::IPA includes stale build source, refusing download artifact"
             exit 1
           }
-          if [ "$SG_DJ_BEATIT" = "1" ]; then
-            unzip -l "$FINAL_IPA" | grep -q 'SpotifyGlassDJ.bundle/BeatThis_small0.mlpackage/Manifest.json' || {
-              echo "::error::BeatIt Core ML resources absent from IPA"
-              exit 1
-            }
-            echo "Pinned BeatIt Core ML resource found in dev IPA" >> "$GITHUB_STEP_SUMMARY"
-          fi
           if ! unzip -l "$FINAL_IPA" | grep -q SpotifyGlassLiveActivity.appex; then
             echo "::warning::Live Activity extension was not preserved"
           fi
