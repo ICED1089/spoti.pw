@@ -5,6 +5,7 @@ on:
     paths:
       - 'tweak/**'
       - 'scripts/**'
+      - 'Makefile'
       - '.github/workflows/test-dev.yml'
       - '.github/workflows/build-ipa.yml'
   workflow_dispatch:
@@ -31,6 +32,7 @@ jobs:
         run: |
           test -x scripts/pipeline.sh
           bash -n scripts/pipeline.sh
+          grep -q 'bash ./scripts/pipeline.sh \$(IPA)' Makefile
       - name: Ensure DJ components are absent
         run: |
           test ! -e tweak/Sources/Shared/DJMix
