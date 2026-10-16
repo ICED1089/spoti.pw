@@ -362,17 +362,22 @@ static NSURL *artistLogoURL(id attributes) {
     if (![editorial isKindOfClass:NSDictionary.class]) return nil;
     // Some catalog responses carry a non-trimmed colour rendition instead.
     // Do not fall back to generic portrait or album artwork as a fake artist logo.
-    id rendition = editorial[@"musicContentColorLogoTrimmed"] ?: editorial[@"musicContentColorLogo"];
-    NSString *template = [rendition isKindOfClass:NSDictionary.class] ? rendition[@"url"] :
-                         [rendition isKindOfClass:NSString.class] ? rendition : nil;
-    if (![template isKindOfClass:NSString.class] || !template.length) return nil;
-    NSString *address = [[[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
-                           stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"]
-                           stringByReplacingOccurrencesOfString:@"{f}" withString:@"png"];
-    if ([address containsString:@"{"] || [address containsString:@"}"]) return nil;
-    NSURL *url = [NSURL URLWithString:address];
-    // Accept only HTTPS artwork returned by the catalog; never load an arbitrary URL from a page.
-    return [url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length ? url : nil;
+    // A key may exist without a usable URL; do not let a broken trimmed
+    // rendition suppress Apple's valid untrimmed variant for this artist.
+    for (NSString *key in @[@"musicContentColorLogoTrimmed", @"musicContentColorLogo"]) {
+        id rendition = editorial[key];
+        NSString *template = [rendition isKindOfClass:NSDictionary.class] ? rendition[@"url"] :
+                             [rendition isKindOfClass:NSString.class] ? rendition : nil;
+        if (![template isKindOfClass:NSString.class] || !template.length) continue;
+        NSString *address = [[[template stringByReplacingOccurrencesOfString:@"{w}" withString:@"1200"]
+                               stringByReplacingOccurrencesOfString:@"{h}" withString:@"480"]
+                               stringByReplacingOccurrencesOfString:@"{f}" withString:@"png"];
+        if ([address containsString:@"{"] || [address containsString:@"}"]) continue;
+        NSURL *url = [NSURL URLWithString:address];
+        // Accept only HTTPS artwork returned by the catalog; never load an arbitrary URL.
+        if ([url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length) return url;
+    }
+    return nil;
 }
 
 // The search API does not always return the same extended artist fields as a
