@@ -86,16 +86,16 @@ def logo_url(attrs):
     editorial = attrs.get("editorialArtwork")
     if not isinstance(editorial, dict):
         return None, "no editorialArtwork"
-    rendition = editorial.get("musicContentColorLogoTrimmed") or editorial.get("musicContentColorLogo")
-    template = rendition.get("url") if isinstance(rendition, dict) else rendition
-    if not isinstance(template, str) or not template:
-        return None, "no recognized logo rendition"
-    url = template.replace("{w}", "1200").replace("{h}", "480").replace("{f}", "png")
-    parts = urllib.parse.urlsplit(url)
-    if "{" in url or "}" in url or parts.scheme != "https" or not parts.hostname:
-        return None, "unresolved or invalid HTTPS template"
-    return url, "recognized rendition"
-
+    for key in ("musicContentColorLogoTrimmed", "musicContentColorLogo"):
+        rendition = editorial.get(key)
+        template = rendition.get("url") if isinstance(rendition, dict) else rendition
+        if not isinstance(template, str) or not template:
+            continue
+        url = template.replace("{w}", "1200").replace("{h}", "480").replace("{f}", "png")
+        parts = urllib.parse.urlsplit(url)
+        if "{" not in url and "}" not in url and parts.scheme == "https" and parts.hostname:
+            return url, "recognized " + key
+    return None, "no usable recognized logo rendition"
 
 def matte_result(raw):
     from PIL import Image
@@ -180,6 +180,11 @@ def selftest():
               "https://example.com/{w}x{h}.{f}"}}}
     assert logo_url(sample)[0] == "https://example.com/1200x480.png"
     assert logo_url({"artwork": sample})[0] is None
+    # Regression: a malformed trimmed rendition must not hide a valid fallback.
+    both = {"editorialArtwork": {
+        "musicContentColorLogoTrimmed": {"width": 3000},
+        "musicContentColorLogo": {"url": "https://example.com/{w}x{h}.{f}"}}}
+    assert logo_url(both)[0] == "https://example.com/1200x480.png"
     for rgba, expected in [((255, 255, 255, 0), "ACCEPTED"),
                            ((0, 0, 0, 255), "REJECTED")]:
         picture = Image.new("RGBA", (40, 20), rgba)
