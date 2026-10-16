@@ -31,6 +31,7 @@
 #import "Artist.h"
 #import "Shared/LockScreenArtwork/SGAppleArtwork.h"
 #import "SGArtistLogoMatte.h"
+#import <float.h>
 
 // How much of the photo's height the dissolve into the field covers, and the scrim over the top of it that
 // keeps the status bar and the back button legible on a bright picture. The playlist's and the album's.
@@ -40,7 +41,7 @@ static const CGFloat kMinCover = 80, kMinHero = 120;
 // The collapsed ImageHeaderView, Spotify's navigation bar; the text fades out over the last kFade before it.
 static const CGFloat kBar = 100, kFade = 150;
 
-static char kInfoKey, kHeroKey, kHeroHeightKey, kContainerHeightKey, kRowWatchedKey, kLogoNameKey;
+static char kInfoKey, kHeroKey, kHeroHeightKey, kContainerHeightKey, kRowWatchedKey, kLogoNameKey, kLogoRetryKey;
 static char kTitleKey, kMetaKey, kShuffleKey, kPlayKey, kFollowKey, kArtworkKey, kBarKey, kMoreKey, kMoreButtonKey;
 
 #pragma mark - Spotify's views
@@ -244,8 +245,14 @@ static void showArtistLogo(SGRHeaderInfo *info, NSString *name) {
         return;
     }
     NSString *wanted = objc_getAssociatedObject(info, &kLogoNameKey);
-    if ([wanted isEqualToString:name]) return;
+    // A failed network lookup must not suppress this logo for the lifetime of
+    // the same artist page. Throttle retries so scrolling never floods Apple.
+    if ([wanted isEqualToString:name]) {
+        NSNumber *next = objc_getAssociatedObject(info, &kLogoRetryKey);
+        if (!next || CFAbsoluteTimeGetCurrent() < next.doubleValue) return;
+    }
     objc_setAssociatedObject(info, &kLogoNameKey, name, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    objc_setAssociatedObject(info, &kLogoRetryKey, @(CFAbsoluteTimeGetCurrent() + 120), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [info showTitleLogo:nil];
 
     UIImage *cached = [artistLogoImages() objectForKey:name];
@@ -253,7 +260,19 @@ static void showArtistLogo(SGRHeaderInfo *info, NSString *name) {
     __weak SGRHeaderInfo *weakInfo = info;
     SGAppleArtistLogoFind(name, ^(NSURL *url, NSString *note) {
         if (!url) {
-            SGLog(@"redesign artist: no Apple Music logo for %@ (%@)", name, note);
+            // Catalog misses are normal on iOS 27's opt-in artist-logo feature.
+            // Temporary errors are checked sooner; neither suppresses the
+            // readable native title or triggers an immediate retry loop.
+            dispatch_async(dispatch_get_main_queue(), ^{
+                SGRHeaderInfo *current = weakInfo;
+                if (current && [objc_getAssociatedObject(current, &kLogoNameKey) isEqualToString:name]) {
+                    BOOL missing = [note hasPrefix:@"no matching artist wordmark (200)"];
+                    NSTimeInterval delay = missing ? 600 : 60;
+                    objc_setAssociatedObject(current, &kLogoRetryKey,
+                                            @(CFAbsoluteTimeGetCurrent() + delay), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                }
+                SGLog(@"redesign artist: no Apple Music logo for %@ (%@)", name, note ?: @"unknown result");
+            });
             return;
         }
         NSURLRequest *request = [NSURLRequest requestWithURL:url
@@ -270,8 +289,16 @@ static void showArtistLogo(SGRHeaderInfo *info, NSString *name) {
                 }
                 SGRHeaderInfo *current = weakInfo;
                 if (!current || ![objc_getAssociatedObject(current, &kLogoNameKey) isEqualToString:name]) return;
-                if (image) [current showTitleLogo:image];
-                else SGLog(@"redesign artist: logo image unavailable for %@ (HTTP %ld)", name, (long)status);
+                if (image) {
+                    [current showTitleLogo:image];
+                    objc_setAssociatedObject(current, &kLogoRetryKey, @(DBL_MAX), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    SGLog(@"redesign artist: wordmark loaded for %@ (%@)", name, note ?: @"Apple Music catalog");
+                } else {
+                    objc_setAssociatedObject(current, &kLogoRetryKey,
+                                            @(CFAbsoluteTimeGetCurrent() + 120), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    SGLog(@"redesign artist: logo image unavailable for %@ (HTTP %ld, %@)",
+                          name, (long)status, error.localizedDescription ?: @"unsupported image or empty response");
+                }
             });
         }] resume];
     });
