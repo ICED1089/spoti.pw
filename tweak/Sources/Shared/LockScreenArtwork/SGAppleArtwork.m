@@ -356,6 +356,15 @@ static NSMutableDictionary<NSString *, NSNumber *> *sg_artistLogoMissUntil;
 static NSMutableArray<NSString *> *sg_artistLogoOrder;
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_artistLogoWaiters;
 
+// Report only JSON field names, never artwork URLs or the bearer token. This
+// distinguishes a valid catalog response with no logo from a parser mismatch.
+static NSString *artistEditorialKeys(id attributes) {
+    id editorial = [attributes isKindOfClass:NSDictionary.class] ? attributes[@"editorialArtwork"] : nil;
+    if (![editorial isKindOfClass:NSDictionary.class]) return @"(none)";
+    NSArray *keys = [[((NSDictionary *)editorial) allKeys] sortedArrayUsingSelector:@selector(compare:)];
+    return keys.count ? [keys componentsJoinedByString:@", "] : @"(empty)";
+}
+
 static NSURL *artistLogoURL(id attributes) {
     if (![attributes isKindOfClass:NSDictionary.class]) return nil;
     id editorial = attributes[@"editorialArtwork"];
@@ -405,7 +414,11 @@ static void detailArtistLogo(NSString *token, NSString *artist, NSString *artist
         NSArray *data = [response[@"data"] isKindOfClass:NSArray.class] ? response[@"data"] : nil;
         NSDictionary *item = [data.firstObject isKindOfClass:NSDictionary.class] ? data.firstObject : nil;
         NSDictionary *attrs = [item[@"attributes"] isKindOfClass:NSDictionary.class] ? item[@"attributes"] : nil;
-        NSURL *logo = [plain(attrs[@"name"]) isEqualToString:plain(artist)] ? artistLogoURL(attrs) : nil;
+        BOOL exact = [plain(attrs[@"name"]) isEqualToString:plain(artist)];
+        NSURL *logo = exact ? artistLogoURL(attrs) : nil;
+        SGLog(@"artist logo catalog: detail %@ HTTP %ld; exact=%@; editorial fields=[%@]; rendition=%@",
+              artist, (long)status, exact ? @"yes" : @"no", artistEditorialKeys(attrs),
+              logo ? @"usable" : @"absent or unsupported");
         done(logo, logo ? @"Apple Music artist detail wordmark" :
                       status == 200 ? @"no matching artist wordmark (200)" :
                       [NSString stringWithFormat:@"Apple Music artist detail answered %ld", (long)status]);
@@ -440,15 +453,20 @@ static void searchArtistLogo(NSString *token, NSString *artist, BOOL retry,
         NSArray *matches = [artistResults isKindOfClass:NSDictionary.class] ? artistResults[@"data"] : nil;
         NSURL *logo = nil;
         NSString *matchedID = nil;
+        NSDictionary *matchedAttributes = nil;
         if ([matches isKindOfClass:NSArray.class]) for (id item in matches) {
             NSDictionary *attributes = [item isKindOfClass:NSDictionary.class] ? item[@"attributes"] : nil;
             if (![attributes isKindOfClass:NSDictionary.class] ||
                 ![plain(attributes[@"name"]) isEqualToString:plain(artist)]) continue;
+            if (!matchedAttributes) matchedAttributes = attributes;
             if (!matchedID && [item[@"id"] isKindOfClass:NSString.class])
                 matchedID = item[@"id"];
             logo = artistLogoURL(attributes);
             if (logo) break;
         }
+        SGLog(@"artist logo catalog: search %@ HTTP %ld; exact=%@; editorial fields=[%@]; rendition=%@",
+              artist, (long)status, matchedAttributes ? @"yes" : @"no",
+              artistEditorialKeys(matchedAttributes), logo ? @"usable" : @"absent or unsupported");
         if (logo) { done(logo, @"Apple Music artist search wordmark"); return; }
         if (status == 200 && matchedID.length) {
             detailArtistLogo(token, artist, matchedID, done);
