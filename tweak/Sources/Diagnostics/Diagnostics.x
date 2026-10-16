@@ -6,6 +6,9 @@
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <unistd.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <string.h>
 
 static const uint16_t kTreePort = 8085;
 
@@ -96,6 +99,63 @@ void SGDumpScreen(NSString *reason) {
     SGLogLong([@"screen dump " stringByAppendingString:reason], SGScreenTree());
 }
 
+// Read-only probes for Spotify versions newer than v0.23's original target.
+// Never install hooks, dereference Spotify internals or infer support from method presence.
+static NSString *sgLoadedSpotifyUUID(void) {
+    NSString *executable = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleExecutable"];
+    if (![executable isKindOfClass:NSString.class] || !executable.length) return @"unknown (no executable name)";
+    NSMutableArray<NSString *> *matches = [NSMutableArray array];
+    for (uint32_t image = 0; image < _dyld_image_count(); image++) {
+        const char *path = _dyld_get_image_name(image);
+        const struct mach_header *base = _dyld_get_image_header(image);
+        if (!path || !base || base->magic != MH_MAGIC_64) continue;
+        const char *name = strrchr(path, '/');
+        if (strcmp(name ? name + 1 : path, executable.UTF8String)) continue;
+        const struct mach_header_64 *header = (const void *)base;
+        const struct load_command *command = (const void *)(header + 1);
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (command->cmdsize < sizeof(struct load_command)) break;
+            if (command->cmd == LC_UUID && command->cmdsize >= sizeof(struct uuid_command)) {
+                const uint8_t *uuid = ((const struct uuid_command *)command)->uuid;
+                NSMutableString *value = [NSMutableString string];
+                for (NSUInteger j = 0; j < 16; j++) {
+                    if (j == 4 || j == 6 || j == 8 || j == 10) [value appendString:@"-"];
+                    [value appendFormat:@"%02x", uuid[j]];
+                }
+                [matches addObject:value];
+                break;
+            }
+            command = (const void *)((const char *)command + command->cmdsize);
+        }
+    }
+    return matches.count == 1 ? matches.firstObject :
+        (matches.count ? @"ambiguous (multiple matching images)" : @"not found in loaded images");
+}
+
+static NSString *sgCompatibilityRuntimeReport(void) {
+    NSMutableString *out = [NSMutableString stringWithFormat:
+        @"== Spotify runtime compatibility probes (presence does not prove support) ==\\n"
+         "Loaded Spotify executable UUID: %@\\n", sgLoadedSpotifyUUID()];
+    NSArray<NSArray<NSString *> *> *checks = @[
+        @[@"SPTEsperantoPlayer", @"addPlayerObserver:"],
+        @[@"SPTPlayerState", @"isPaused"],
+        @[@"_TtC23NowPlaying_PlatformImpl28StatefulPlayerImplementation", @"player:stateDidChange:"],
+        @[@"_TtC21NowPlaying_ScrollImpl23NPVScrollViewController", @"viewDidAppear:"],
+        @[@"_TtC28NowPlaying_ContentLayersImpl24HorizontalVideoViewModel", @"videoSurfaceDidAttachVideo:"],
+        @[@"_TtC28NowPlaying_ContentLayersImpl31VerticalVideoCellImplementation", @"videoSurfaceDidAttachVideo:"],
+        @[@"_TtC22NowPlaying_ElementsKit14VideoElementUI", @"videoSurfaceDidAttachVideo:"]
+    ];
+    for (NSArray<NSString *> *check in checks) {
+        Class type = NSClassFromString(check[0]);
+        BOOL present = type && class_getInstanceMethod(type, NSSelectorFromString(check[1])) != NULL;
+        [out appendFormat:@"%@ - %@: %@\\n", check[0], check[1],
+            !type ? @"class missing" : (present ? @"method present" : @"method missing")];
+    }
+    [out appendFormat:@"iOS Liquid Glass class: %@\\n\\n",
+        NSClassFromString(@"UIGlassEffect") ? @"present" : @"missing (expected below iOS 26)"];
+    return out;
+}
+
 NSString *SGDiagnosticsReport(void) {
     NSString *spotify = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown";
     NSString *spotifyBuild = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"unknown";
@@ -119,6 +179,7 @@ NSString *SGDiagnosticsReport(void) {
          SGAudioStatusAvailable() ? @"available" : @"unavailable",
          SGAudioStatusReason().length ? [NSString stringWithFormat:@" (%@)", SGAudioStatusReason()] : @""];
 
+    [report appendString:sgCompatibilityRuntimeReport()];
     [report appendString:@"== current screen and mod state ==\n"];
     [report appendString:SGScreenTree() ?: @"(screen tree unavailable)\n"];
 
