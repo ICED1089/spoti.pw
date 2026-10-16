@@ -27,6 +27,10 @@ jobs:
           git diff --exit-code origin/stable/v0.23 -- \
             tweak/Sources/Shared/Audio/SGAudioSourceQueue.m \
             tweak/Sources/Shared/Audio/SGAudioPipeline.x
+      - name: Validate release entrypoint permissions and shell syntax
+        run: |
+          test -x scripts/pipeline.sh
+          bash -n scripts/pipeline.sh
       - name: Ensure DJ components are absent
         run: |
           test ! -e tweak/Sources/Shared/DJMix
