@@ -134,8 +134,8 @@ static NSString *sgLoadedSpotifyUUID(void) {
 
 static NSString *sgCompatibilityRuntimeReport(void) {
     NSMutableString *out = [NSMutableString stringWithFormat:
-        @"== Spotify runtime compatibility probes (presence does not prove support) ==\\n"
-         "Loaded Spotify executable UUID: %@\\n", sgLoadedSpotifyUUID()];
+        @"== Spotify runtime compatibility probes (presence does not prove support) ==\n"
+         "Loaded Spotify executable UUID: %@\n", sgLoadedSpotifyUUID()];
     NSArray<NSArray<NSString *> *> *checks = @[
         @[@"SPTEsperantoPlayer", @"addPlayerObserver:"],
         @[@"SPTPlayerState", @"isPaused"],
@@ -148,10 +148,10 @@ static NSString *sgCompatibilityRuntimeReport(void) {
     for (NSArray<NSString *> *check in checks) {
         Class type = NSClassFromString(check[0]);
         BOOL present = type && class_getInstanceMethod(type, NSSelectorFromString(check[1])) != NULL;
-        [out appendFormat:@"%@ - %@: %@\\n", check[0], check[1],
+        [out appendFormat:@"%@ - %@: %@\n", check[0], check[1],
             !type ? @"class missing" : (present ? @"method present" : @"method missing")];
     }
-    [out appendFormat:@"iOS Liquid Glass class: %@\\n\\n",
+    [out appendFormat:@"iOS Liquid Glass class: %@\n\n",
         NSClassFromString(@"UIGlassEffect") ? @"present" : @"missing (expected below iOS 26)"];
     return out;
 }
