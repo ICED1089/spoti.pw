@@ -14,11 +14,11 @@ DEV_ICON ?= docs/icon.png
 
 .PHONY: build release install trees session log flags
 build:    ## FLEX + glass IPA into out/
-	./scripts/pipeline.sh $(IPA)
+	bash ./scripts/pipeline.sh $(IPA)
 release:  ## glass only, no FLEX
-	./scripts/pipeline.sh $(IPA) --no-flex
+	bash ./scripts/pipeline.sh $(IPA) --no-flex
 install:  ## build, sign with your certificate, push to the phone on USB (FLEX=1 to take FLEX too)
-	./scripts/pipeline.sh $(IPA) --install $(FLEX_ARG) --name "$(DEV_NAME)" --icon "$(DEV_ICON)" -o out/spoti.dev.ipa
+	bash ./scripts/pipeline.sh $(IPA) --install $(FLEX_ARG) --name "$(DEV_NAME)" --icon "$(DEV_ICON)" -o out/spoti.dev.ipa
 trees:    ## record per-screen view trees into trees/ (needs a FLEX build on the phone)
 	./scripts/record-trees.py
 session:  ## record clean trees screen by screen into trees/clean/, Enter per snapshot, n for the next screen (SCREENS="playlist artist" for some)
