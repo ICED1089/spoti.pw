@@ -14,8 +14,8 @@
 
 - Clean base: `stable/v0.23` at `03502ae5586602612f7268b78d1ab5ba5abad7e8`.
 - Original unrelated dev history preserved at `archive/dev-v023-pre-stable-rebase-20261012`.
-- Dev tree reconstructed directly from stable with selected new DJ, logo, animation, performance and Sing menu changes.
+- Dev tree reconstructed directly from stable with selected logo, animation, performance and Sing fixes (the DJ Mix laboratory was later removed).
 - Core stable audio source queue and pipeline implementation are byte-for-byte unchanged. **Do not restore old dev queue offsets or older Spotify 9.1.90 compatibility behavior.**
-- No live two-stream AutoMix has been proven, so the player settings must show it unavailable rather than suggesting it is enabled.
+- DJ Mix and its optional build backend were removed from dev. The feature must not appear in the app or build workflow.
 
 Stable is a moving base, not a frozen backup. A feature is only part of stable when it has been deliberately promoted and tested.
