@@ -1,0 +1,21 @@
+name: Isolated Apple Music artist logo probe
+on:
+  push:
+    branches: [dev/v0.23]
+    paths:
+      - 'tests/artist_logo_live_probe.py'
+      - '.github/workflows/test-artist-logos.yml'
+  workflow_dispatch:
+jobs:
+  apple-logo-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install isolated image reader
+        run: python -m pip install Pillow
+      - name: Probe public Apple Music search, detail, image and our matte rule
+        run: python tests/artist_logo_live_probe.py
