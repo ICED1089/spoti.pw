@@ -352,6 +352,7 @@ void SGAppleArtworkFind(NSString *artist, NSString *album, BOOL tall, void (^don
 // "artwork" field is an artist portrait, and must not be mistaken for a name-shaped wordmark.
 // A missing or unrecognized field is a normal outcome: keep Spotify's accessible title.
 static NSMutableDictionary<NSString *, id> *sg_artistLogos;
+static NSMutableDictionary<NSString *, NSNumber *> *sg_artistLogoMissUntil;
 static NSMutableArray<NSString *> *sg_artistLogoOrder;
 static NSMutableDictionary<NSString *, NSMutableArray *> *sg_artistLogoWaiters;
 
@@ -462,6 +463,13 @@ void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSStri
     if (!sg_artistLogoOrder) sg_artistLogoOrder = [NSMutableArray array];
     NSString *key = plain(artist);
     id cached = sg_artistLogos[key];
+    // A catalog miss is not permanent: logos are artist-submitted and can
+    // appear later. Retry missing wordmarks after a short negative-cache TTL.
+    if (cached == NSNull.null && [sg_artistLogoMissUntil[key] doubleValue] <= CFAbsoluteTimeGetCurrent()) {
+        [sg_artistLogos removeObjectForKey:key];
+        [sg_artistLogoMissUntil removeObjectForKey:key];
+        cached = nil;
+    }
     if (cached) {
         [sg_artistLogoOrder removeObject:key];
         [sg_artistLogoOrder addObject:key];
@@ -477,12 +485,16 @@ void SGAppleArtistLogoFind(NSString *artist, void (^done)(NSURL *logoURL, NSStri
         searchArtistLogo(token, artist, YES, ^(NSURL *url, NSString *note) {
             if (url || [note hasPrefix:@"no matching artist wordmark (200)"]) {
                 sg_artistLogos[key] = url ?: NSNull.null;
+                if (!sg_artistLogoMissUntil) sg_artistLogoMissUntil = [NSMutableDictionary dictionary];
+                if (url) [sg_artistLogoMissUntil removeObjectForKey:key];
+                else sg_artistLogoMissUntil[key] = @(CFAbsoluteTimeGetCurrent() + 600);
                 [sg_artistLogoOrder removeObject:key];
                 [sg_artistLogoOrder addObject:key];
                 while (sg_artistLogoOrder.count > 80) {
                     NSString *oldest = sg_artistLogoOrder.firstObject;
                     [sg_artistLogoOrder removeObjectAtIndex:0];
                     [sg_artistLogos removeObjectForKey:oldest];
+                    [sg_artistLogoMissUntil removeObjectForKey:oldest];
                 }
             }
             NSArray *callbacks = sg_artistLogoWaiters[key];
